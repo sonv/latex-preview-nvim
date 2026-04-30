@@ -2,8 +2,8 @@
 
 ## Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.
 
-Hover-style LaTeX math preview for Neovim that can **live update while typing**. 
-Press a key inside a mathexpression and a small floating window pops up with the rendered equation —
+Hover-style LaTeX math preview for Neovim that can **live update while typing**.
+Press a key inside a math expression and a small floating window pops up with the rendered equation —
 the way Overleaf shows preview tooltips on hover.
 
 
@@ -84,14 +84,15 @@ Run `:checkhealth latex-preview` after install to verify.
   ft = { "tex", "latex", "markdown", "rmd", "quarto" },
   opts = {
     setup_keymap = true,   -- bind <leader>ih in supported filetypes
-    cache_dir = "aux",     -- put rendered files in <texfile-dir>/aux/
+    cache = true,          -- persist renders to disk
+    cache_dir = "aux",     -- default: <texfile-dir>/aux/latex-preview-cache/
   },
 }
 ```
 
 That's the recommended LaTeX-project setup: `<leader>ih` toggles the
-popup, and rendered images live alongside your build artifacts in the
-project's `aux/` directory rather than a global cache.
+popup, and rendered images are cached alongside your build artifacts in
+`aux/latex-preview-cache/` rather than a global directory.
 
 Make sure your snacks.nvim setup has `image.enabled = true`. If you're
 already using snacks, you probably do.
@@ -187,12 +188,14 @@ require("latex-preview").setup({
   setup_keymap = false,        -- install the toggle key automatically
   keymap = "<leader>ih",       -- the toggle key (or list of keys)
 
-  -- Where to put rendered SVG/PNG files. Three forms:
-  --   * a string path:        used globally for all buffers
-  --   * the magic word "aux": <texfile-dir>/aux/latex-preview-cache/
-  --   * a function:           fun(buf: integer): string
-  -- Disk cache is off by default. Live hover and unsaved buffers use temp files.
+  -- Disk cache is off by default; live hover always uses temp files.
+  -- Set cache = true to persist renders across sessions.
   cache = false,
+  -- Where to write cached SVG/PNG files. Three forms:
+  --   "aux" (default) — <texfile-dir>/aux/latex-preview-cache/
+  --                     (falls back to stdpath cache for unsaved buffers)
+  --   "/some/path"    — a fixed global directory for all buffers
+  --   function(buf)   — called per buffer, return an absolute path
   cache_dir = "aux",
 
   daemon = {
@@ -288,14 +291,33 @@ For those, your `pdflatex` compile remains the source of truth.
 
 | | First render | Subsequent |
 |---|---|---|
-| Daemon boot | ~1500 ms | 0 |
-| MathJax render | ~10–40 ms | ~10–40 ms |
-| SVG → PNG | ~150 ms | ~150 ms |
+| Daemon boot | ~300–500 ms | 0 |
+| MathJax render | ~10–30 ms | ~10–30 ms |
+| SVG → PNG | ~20–30 ms | ~20–30 ms |
 | Cache hit | n/a | ~1 ms |
+
+Measured on Apple Silicon / Node v25 with rsvg-convert. Older hardware
+or Node versions may be slower (daemon boot up to ~1 s on Node v18).
 
 The daemon stays warm for the whole Neovim session. After the first
 render, hover popups feel instant — the typical case is a cache hit on
 something you've already seen, which returns in ~1 ms.
+
+### Equation scanning (regex fallback)
+
+When treesitter parsers are not available, the plugin falls back to a
+regex scan. Consumed byte ranges are tracked as sorted intervals with
+binary-search overlap detection rather than marking every byte:
+
+| File size | Equations | Scan time |
+|---|---|---|
+| ~10 KB | ~50 inline | ~65 µs |
+| ~40 KB | ~260 inline | ~250 µs |
+| ~150 KB | ~1200 inline | ~900 µs |
+| ~500 KB | ~6000 inline | ~4500 µs |
+
+Sub-millisecond for typical files. The treesitter path has no regex
+overhead at all.
 
 ## Troubleshooting
 
@@ -313,7 +335,7 @@ existed; run `:LatexPreview clear` and try again.
 **The popup doesn't appear.** Check `:LatexPreview status` — does
 "terminal supports graphics" say `true`? If not, you're on a terminal
 without Kitty graphics protocol support. The plugin needs Kitty,
-WezTerm, or Ghostty.
+iTerm2, WezTerm, or Ghostty.
 
 **Specific equation gives "render failed".** Run `:messages` for the
 specific error. MathJax doesn't support every TeX command; switch to
@@ -324,10 +346,10 @@ larger). HiDPI users typically want 600.
 
 **Daemon respawns repeatedly.** `mathjax-full` not in the search path.
 Set `LATEX_PREVIEW_MATHJAX_PATH` env var to its install directory, or
-`npm install -g mathjax-full@3` again.
+`npm install -g mathjax-full` again.
 
 **It's slow on the very first equation.** That's the daemon boot
-(~1.5s). Every later equation is fast.
+(~300–500 ms on modern hardware). Every later equation is fast.
 
 ## License
 
