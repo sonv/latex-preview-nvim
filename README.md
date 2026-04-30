@@ -11,23 +11,9 @@ from your buffer and any local `.sty` files automatically.
 
 ## What it looks like
 
-Press `K` (or whatever you bind it to) with the cursor inside `$\R^n$`,
-and a popup appears just below the line:
+Demo:
 
-```
-  ┌──────────┐
-  │   ℝⁿ     │
-  └──────────┘
-```
-
-For a display equation like `\[ \argmin_{x \in \R} \|x - y\|^2 \]`:
-
-```
-  ┌────────────────────────────┐
-  │   arg min   ‖x - y‖²       │
-  │       x∈ℝ                  │
-  └────────────────────────────┘
-```
+[Watch Demo on YouTube](https://youtu.be/rwW1LDnmkCE)
 
 ## Why this design
 
