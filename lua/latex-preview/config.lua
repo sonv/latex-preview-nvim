@@ -66,13 +66,13 @@ M.defaults = {
   -- rather wire the keymap yourself.
   setup_keymap = false,
   cache = false,
-  cache_dir = vim.fn.stdpath("cache") .. "/latex-preview",
+  cache_dir = "aux",
   -- cache_dir can be:
-  --   * a string path, used globally (the default — one cache for all files)
-  --   * a function `fun(buf: integer): string` returning a path per buffer
-  --   * the magic string "aux" — places `.svg`/`.png` files in
+  --   * the magic string "aux" (default) — places files in
   --     `<texfile-dir>/aux/latex-preview-cache/`. For unsaved buffers,
   --     falls back to the global stdpath cache.
+  --   * a string path, used globally for all files
+  --   * a function `fun(buf: integer): string` returning a path per buffer
 
   daemon = {
     cmd = nil, -- nil = auto-resolve to <plugin>/scripts/mathjax-daemon.mjs
@@ -157,13 +157,9 @@ function M.get_cache_dir(buf)
   local c = M.options.cache_dir
   if type(c) == "function" then return c(buf) end
   if c == "aux" then
-    -- "aux" means: <buffer-file's directory>/aux. This matches LaTeX
-    -- conventions (latexmk, tectonic, etc. all have flags for putting
-    -- build artifacts in such a sibling directory). For unsaved buffers,
-    -- fall back to the global cache.
     local name = vim.api.nvim_buf_get_name(buf)
     if name == "" then
-      return vim.fn.stdpath("cache") .. "/latex-preview"
+      return vim.fn.stdpath("cache") .. "/latex-preview-cache"
     end
     return vim.fs.dirname(vim.fn.fnamemodify(name, ":p")) .. "/aux/latex-preview-cache"
   end

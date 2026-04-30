@@ -200,7 +200,7 @@ require("latex-preview").setup({
   --   * a function:           fun(buf: integer): string
   -- Disk cache is off by default. Live hover and unsaved buffers use temp files.
   cache = false,
-  cache_dir = vim.fn.stdpath("cache") .. "/latex-preview",
+  cache_dir = "aux",
 
   daemon = {
     cmd = nil,                 -- override daemon command if needed

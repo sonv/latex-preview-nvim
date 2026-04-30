@@ -34,7 +34,7 @@ local render = require("latex-preview.render")
 ---@field live_png string?
 local current = nil ---@type LatexPreview.HoverState?
 local next_render_id = 0
-local autocmd_registered = false
+local autocmd_buf = nil
 local refresh_timer = nil
 local source_keymaps = {} ---@type table<integer, boolean>
 local auto_buffers = {} ---@type table<integer, boolean>
@@ -67,6 +67,7 @@ local function close_current()
     end
     source_keymaps[buf] = nil
   end
+  autocmd_buf = nil
   current = nil
 end
 
@@ -171,34 +172,34 @@ local function schedule_current_open(buf)
 end
 
 local function register_autocmds(buf)
-  if autocmd_registered then return end
-  autocmd_registered = true
+  if autocmd_buf == buf then return end
+  autocmd_buf = buf
   local group = vim.api.nvim_create_augroup("latex_preview_hover", { clear = true })
   vim.api.nvim_create_autocmd({ "BufLeave", "BufWipeout" }, {
     group = group,
     buffer = buf,
     callback = function()
       close_current()
-      autocmd_registered = false
       return true
     end,
   })
+  -- When the buffer already has auto-hover attached, its CursorMoved/
+  -- TextChanged/CompleteDone handlers already call M.open(). Registering
+  -- them here too would fire M.open() twice per event.
+  if auto_buffers[buf] then return end
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
     group = group,
     buffer = buf,
     callback = function()
       if not current then
-        autocmd_registered = false
+        autocmd_buf = nil
         return true
       end
       if not equation_under_cursor(buf) then
         close_current()
-        autocmd_registered = false
         return true
       end
       if vim.fn.pumvisible() == 1 then return end
-      -- Cursor motion should only move the popup. M.open() will skip
-      -- rendering if the equation/preamble signature is unchanged.
       M.open()
     end,
   })
@@ -208,7 +209,7 @@ local function register_autocmds(buf)
     callback = function()
       if vim.fn.pumvisible() == 1 then return end
       if schedule_current_open(buf) then
-        autocmd_registered = false
+        autocmd_buf = nil
         return true
       end
     end,
@@ -384,7 +385,7 @@ function M.open()
 
     -- If a hover for the same image is already showing, just refresh it.
     -- Otherwise close any previous and open a new one.
-    if current and current.img.img.src == png_path then
+    if current and current.img and current.img.img and current.img.img.src == png_path then
       current.eq = eq
       current.source_win = source_win
       show_under_cursor(current.win, source_win)

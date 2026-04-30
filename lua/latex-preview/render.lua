@@ -173,13 +173,26 @@ local function pad_to_cells(png_path, cb)
   local bin = vim.fn.executable("magick") == 1 and "magick"
     or (vim.fn.executable("convert") == 1 and "convert" or nil)
   if not bin then return cb(nil) end
+  -- Write to a sibling temp file first so a mid-write crash can't corrupt
+  -- the cached PNG. Same directory → same filesystem → rename is atomic.
+  local tmp = png_path .. ".tmp"
   spawn(bin, {
     png_path,
     "-background", "none",
     "-gravity", "center",
     "-extent", ("%dx%d"):format(target_width, target_height),
-    png_path,
-  }, function(err) cb(err) end)
+    tmp,
+  }, function(err)
+    if err then
+      pcall(os.remove, tmp)
+      return cb(err)
+    end
+    if not os.rename(tmp, png_path) then
+      pcall(os.remove, tmp)
+      return cb("pad_to_cells: rename failed")
+    end
+    cb(nil)
+  end)
 end
 
 -- Public API ----------------------------------------------------------------

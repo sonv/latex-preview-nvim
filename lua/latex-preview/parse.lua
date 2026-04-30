@@ -135,15 +135,28 @@ local function regex_extract(buf)
     return lo - 1, byte - row_starts[lo]
   end
 
-  -- Patterns ordered by specificity. The same byte range shouldn't be
-  -- matched twice, so we track a "consumed" set.
+  -- Patterns ordered by specificity. Track consumed byte ranges as a
+  -- sorted list of {lo, hi} intervals; overlap checks are O(log n) via
+  -- binary search instead of O(range_size) via byte iteration.
   local consumed = {}
   local function not_consumed(s, e)
-    for i = s, e do if consumed[i] then return false end end
+    local lo, hi = 1, #consumed
+    while lo <= hi do
+      local mid = math.floor((lo + hi) / 2)
+      local iv = consumed[mid]
+      if iv[2] < s then lo = mid + 1
+      elseif iv[1] > e then hi = mid - 1
+      else return false end
+    end
     return true
   end
   local function mark(s, e)
-    for i = s, e do consumed[i] = true end
+    consumed[#consumed + 1] = { s, e }
+    local n = #consumed
+    while n > 1 and consumed[n - 1][1] > s do
+      consumed[n - 1], consumed[n] = consumed[n], consumed[n - 1]
+      n = n - 1
+    end
   end
 
   -- Each entry: {pattern, display, kind}
