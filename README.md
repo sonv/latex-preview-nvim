@@ -2,18 +2,19 @@
 
 ## Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.
 
-Hover-style LaTeX math preview for Neovim. Press a key inside a math
-expression and a small floating window pops up with the rendered equation —
+Hover-style LaTeX math preview for Neovim that can **live update while typing**. 
+Press a key inside a mathexpression and a small floating window pops up with the rendered equation —
 the way Overleaf shows preview tooltips on hover.
 
+
 Renders via MathJax in a long-running Node daemon. Pulls custom macros
-from your buffer and any local `.sty` files automatically.
+from your buffer and any local `.sty` files automatically. 
 
 ## What it looks like
 
 Demo:
 
-[Watch Demo on YouTube](https://youtu.be/rwW1LDnmkCE)
+[Watch Demo on YouTube](https://youtu.be/T5ml30KQkdQ)
 
 ## Why this design
 
@@ -56,14 +57,14 @@ fine for occasional preview but too slow for live editing.
 
 ```sh
 sudo apt install nodejs imagemagick librsvg2-bin
-sudo npm install -g mathjax-full@3
+sudo npm install -g mathjax-full
 ```
 
 ### macOS
 
 ```sh
 brew install node imagemagick librsvg
-npm install -g mathjax-full@3
+npm install -g mathjax-full
 ```
 
 Run `:checkhealth latex-preview` after install to verify.
