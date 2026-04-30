@@ -2,12 +2,14 @@
 
 ## Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.
 
-Hover-style LaTeX math preview for Neovim that can **live update while typing**.
+Inspired by Overleaf's functionality.
+
+This is a hover-style LaTeX math preview for Neovim that can **live update while typing**.
 Press a key inside a math expression and a small floating window pops up with the rendered equation —
 the way Overleaf shows preview tooltips on hover.
 
 
-Renders via MathJax in a long-running Node daemon. Pulls custom macros
+It renders via MathJax in a long-running Node daemon. Pulls custom macros
 from your buffer and any local `.sty` files automatically. 
 
 **WARNING**: This plugin only works with terminal that support graphics such as Kitty or iTerm2, WezTerm, Ghostty.
@@ -287,7 +289,7 @@ Doesn't render: TikZ in math, runtime-evaluated macros (`\ifthenelse`,
 counters, lengths), and exotic packages that do more than define macros.
 For those, your `pdflatex` compile remains the source of truth.
 
-## Performance
+## Performance (done by Claude)
 
 | | First render | Subsequent |
 |---|---|---|
