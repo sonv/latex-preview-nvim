@@ -1,31 +1,24 @@
 # latex-preview.nvim
 
-Hover-style LaTeX math preview for Neovim. Press a key inside a math
-expression and a small floating window pops up with the rendered equation —
+## Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.
+
+Hover-style LaTeX math preview for Neovim that can **live update while typing**. 
+Press a key inside a mathexpression and a small floating window pops up with the rendered equation —
 the way Overleaf shows preview tooltips on hover.
 
+
 Renders via MathJax in a long-running Node daemon. Pulls custom macros
-from your buffer and any local `.sty` files automatically.
+from your buffer and any local `.sty` files automatically. 
+
+**WARNING**: This plugin only works with terminal that support graphics such as Kitty or iTerm2, WezTerm, Ghostty.
+Personally, I've only tested with Kitty, however. 
+
 
 ## What it looks like
 
-Press `K` (or whatever you bind it to) with the cursor inside `$\R^n$`,
-and a popup appears just below the line:
+Demo:
 
-```
-  ┌──────────┐
-  │   ℝⁿ     │
-  └──────────┘
-```
-
-For a display equation like `\[ \argmin_{x \in \R} \|x - y\|^2 \]`:
-
-```
-  ┌────────────────────────────┐
-  │   arg min   ‖x - y‖²       │
-  │       x∈ℝ                  │
-  └────────────────────────────┘
-```
+[Watch Demo on YouTube](https://youtu.be/T5ml30KQkdQ)
 
 ## Why this design
 
@@ -60,22 +53,22 @@ fine for occasional preview but too slow for live editing.
 - **Neovim 0.10+**
 - **[snacks.nvim](https://github.com/folke/snacks.nvim)** with `image.enabled = true` (the renderer + placement engine)
 - **Node.js 18+**
-- **A graphics-capable terminal**: Kitty, WezTerm, or Ghostty
-- **`mathjax-full`** (npm): `npm install -g mathjax-full@3`
+- **A graphics-capable terminal**: Kitty, iTerm2, WezTerm, or Ghostty
+- **`mathjax-full`** (npm): `npm install -g mathjax-full`
 - **An SVG rasterizer**: ImageMagick + librsvg2 (recommended), or rsvg-convert alone
 
 ### Linux
 
 ```sh
 sudo apt install nodejs imagemagick librsvg2-bin
-sudo npm install -g mathjax-full@3
+sudo npm install -g mathjax-full
 ```
 
 ### macOS
 
 ```sh
 brew install node imagemagick librsvg
-npm install -g mathjax-full@3
+npm install -g mathjax-full
 ```
 
 Run `:checkhealth latex-preview` after install to verify.
