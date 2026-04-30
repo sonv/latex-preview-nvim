@@ -10,6 +10,10 @@ the way Overleaf shows preview tooltips on hover.
 Renders via MathJax in a long-running Node daemon. Pulls custom macros
 from your buffer and any local `.sty` files automatically. 
 
+**WARNING**: This plugin only works with terminal that support graphics such as Kitty or iTerm2, WezTerm, Ghostty.
+Personally, I've only tested with Kitty, however. 
+
+
 ## What it looks like
 
 Demo:
@@ -49,8 +53,8 @@ fine for occasional preview but too slow for live editing.
 - **Neovim 0.10+**
 - **[snacks.nvim](https://github.com/folke/snacks.nvim)** with `image.enabled = true` (the renderer + placement engine)
 - **Node.js 18+**
-- **A graphics-capable terminal**: Kitty, WezTerm, or Ghostty
-- **`mathjax-full`** (npm): `npm install -g mathjax-full@3`
+- **A graphics-capable terminal**: Kitty, iTerm2, WezTerm, or Ghostty
+- **`mathjax-full`** (npm): `npm install -g mathjax-full`
 - **An SVG rasterizer**: ImageMagick + librsvg2 (recommended), or rsvg-convert alone
 
 ### Linux
