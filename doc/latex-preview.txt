@@ -1,0 +1,269 @@
+*latex-preview.txt*  Hover-style LaTeX math preview via MathJax
+
+Author:  see README
+License: MIT
+
+==============================================================================
+CONTENTS                                              *latex-preview-contents*
+
+  1. Introduction ........................... |latex-preview-intro|
+  2. Requirements ........................... |latex-preview-requirements|
+  3. Setup .................................. |latex-preview-setup|
+  4. Commands ............................... |latex-preview-commands|
+  5. Keymapping ............................. |latex-preview-keymapping|
+  6. Configuration .......................... |latex-preview-config|
+  7. How it works ........................... |latex-preview-internals|
+  8. Limitations ............................ |latex-preview-limitations|
+  9. Troubleshooting ........................ |latex-preview-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                          *latex-preview-intro*
+
+latex-preview.nvim shows a floating popup with a rendered LaTeX equation
+when you press a key inside a math expression — the way Overleaf's editor
+shows preview tooltips on hover.
+
+Equations are rendered through MathJax in a long-running Node daemon. After
+a one-time daemon boot (~1.5 s), each render takes 10-50 ms. Custom
+\newcommand, \DeclareMathOperator, etc. from the buffer and from local
+.sty files are detected and registered automatically.
+
+==============================================================================
+2. REQUIREMENTS                                   *latex-preview-requirements*
+
+  - Neovim 0.10+
+  - snacks.nvim with image.enabled = true (renderer + placement engine)
+  - Node.js 18+
+  - mathjax-full: `npm install -g mathjax-full@3`
+  - A graphics-capable terminal: kitty, wezterm, or ghostty
+  - ImageMagick + librsvg2 (or rsvg-convert alone)
+
+This plugin uses snacks.nvim's image.placement module to put rendered
+equations inside floating windows. That code handles the Kitty graphics
+protocol, Unicode placeholder layout, autoresize, and cleanup — all
+things the standalone version of this plugin would otherwise reimplement.
+
+Run `:checkhealth latex-preview` to verify dependencies.
+
+==============================================================================
+3. SETUP                                                 *latex-preview-setup*
+
+                                                       *latex-preview.setup()*
+require("latex-preview").setup({opts})
+
+Initializes the plugin. Without arguments, uses defaults. See
+|latex-preview-config|.
+
+Example: >lua
+
+    require("latex-preview").setup({
+      setup_keymap = true,
+      render = { density = 600 },  -- HiDPI displays
+    })
+<
+
+==============================================================================
+4. COMMANDS                                           *latex-preview-commands*
+
+                                                              *:LatexPreview*
+:LatexPreview [{subcommand}]
+        Without an argument, toggles the hover popup. With a subcommand:
+
+        show      Show the popup for the equation under the cursor.
+        close     Close the popup.
+        toggle    Show or close (default).
+        auto      Toggle automatic hover on/off.
+        auto-on   Enable automatic hover.
+        auto-off  Disable automatic hover.
+        clear     Remove cached SVG/PNG files from disk.
+        stop      Stop the MathJax daemon (auto-respawns on next render).
+        status    Print daemon and popup state.
+
+The popup auto-closes on cursor move, leaving the buffer, or entering
+insert mode.
+
+==============================================================================
+5. KEYMAPPING                                       *latex-preview-keymapping*
+
+The plugin doesn't bind any keys by default. The recommended pattern is to
+make K serve double duty — math hover when in a math expression, LSP
+hover otherwise: >lua
+
+    vim.keymap.set("n", "K", function()
+      if not require("latex-preview").hover() then
+        vim.lsp.buf.hover()
+      end
+    end)
+<
+
+`require("latex-preview").hover()` returns true if it opened a popup,
+false if there was no math expression under the cursor — so the fall-
+through is exact.
+
+If you'd rather have the plugin install this mapping for you, set
+`setup_keymap = true` in setup().
+
+==============================================================================
+6. CONFIGURATION                                       *latex-preview-config*
+
+Default config: >lua
+
+    {
+      enabled = true,
+      filetypes = { "tex", "latex", "markdown", "rmd", "quarto" },
+      setup_keymap = false,
+      cache = false,
+      cache_dir = vim.fn.stdpath("cache") .. "/latex-preview",
+
+      daemon = {
+        cmd = nil,
+        max_restarts = 3,
+        ready_timeout_ms = 8000,
+      },
+
+      extract = {
+        scan_sty = true,
+        sty_search_depth = 4,
+        rewrite_providecommand = true,
+        rewrite_edef = true,
+      },
+
+      render = {
+        fg = function() ... end,    -- current Normal fg
+        font_size = 11,
+        display_font_size = 11,
+        display_math_style = "text",
+        pad_to_cells = true,
+        density = 300,
+        svg_to_png = "auto",
+      },
+
+      popup = {
+        max_width = nil,
+        max_height = nil,
+        live_update_delay_ms = 300,
+      },
+
+      hover = {
+        auto_open = nil,
+        toggle_keymap = "<leader>iH",
+      },
+
+      snacks = {
+        disable_document_images = true,
+      },
+    }
+<
+
+When cache=true, persistent cache is used only for saved buffers with no
+unsaved changes. Live hover updates and modified buffers use temporary
+files. Setting cache_dir="aux" writes cache files to:
+>
+    <texfile-dir>/aux/latex-preview-cache/
+<
+
+(Popup sizing, border, and other visuals still come from your snacks.nvim
+image.doc config.)<
+
+                                              *latex-preview-config-scan-sty*
+extract.scan_sty ~
+        Walk \usepackage{name} directives in your buffer and look for
+        matching name.sty files in the buffer's directory and parents.
+        Definitions in those .sty files are added to the preamble. This
+        makes custom notation packages work without per-project config.
+
+                                                   *latex-preview-config-fg*
+render.fg ~
+        Foreground color. "#RRGGBB" string or function returning one.
+        Default tracks current Normal fg, so equations re-render with
+        the right color when you change colorscheme.
+
+                                              *latex-preview-config-density*
+render.density ~
+        SVG -> PNG DPI. 300 for standard displays, 600 for HiDPI.
+
+                                          *latex-preview-config-setup-keymap*
+setup_keymap ~
+        If true, install the configured toggle key in supported filetypes.
+
+                                                   *latex-preview-config-hover*
+hover.auto_open ~
+        If nil, latex-preview follows Snacks' image.doc.float option. If
+        Snacks image.doc.float=true, latex-preview attaches to supported
+        buffers and opens or updates the popup automatically whenever the
+        cursor is inside a math expression.
+
+        Set hover.auto_open=true or false only to override Snacks' float
+        preference.
+
+hover.toggle_keymap ~
+        Key used for the runtime auto-hover toggle when setup_keymap=true.
+        Defaults to <leader>iH. If Snacks.toggle is available, the mapping
+        is registered through Snacks.toggle so which-key can show the current
+        enabled/disabled state.
+
+==============================================================================
+7. HOW IT WORKS                                       *latex-preview-internals*
+
+When you trigger hover:
+
+1. The plugin parses the buffer to find all math expressions and locates
+   the one containing the cursor. If none, it returns false (so the
+   keymap can fall through to LSP).
+
+2. It extracts every macro definition from the buffer plus any matching
+   commands in local .sty files referenced via \usepackage.
+
+3. The preamble + equation goes to a long-running Node daemon running
+   MathJax. The daemon parses the preamble (registering macros into its
+   macro table), then renders the equation to SVG. The SVG is rasterized
+   to PNG via rsvg-convert when available, otherwise ImageMagick.
+
+4. The rendered PNG path is handed to snacks.nvim's
+   `Snacks.image.placement.new(buf, png_path, opts)` inside a fresh
+   `Snacks.win` floating window. Snacks handles transmitting the image
+   to the terminal, placing the Unicode-placeholder cells, sizing the
+   float, and tearing everything down on close.
+
+5. Cursor movement, leaving the buffer, mode change, or buffer write
+   triggers either a re-call (if the cursor moved to a new equation) or
+   a close.
+
+==============================================================================
+8. LIMITATIONS                                     *latex-preview-limitations*
+
+MathJax is a TeX subset; the popup will fail to render:
+
+- TikZ in math mode (except `tikz-cd`)
+- Only local .sty/.tex files reachable from preamble \usepackage,
+  \RequirePackage, and \input directives are scanned
+- Anything requiring runtime TeX execution: \ifthenelse, counters, etc.
+- Custom packages that do more than define macros (options, hooks, etc.)
+
+The plugin requires a Kitty-graphics-capable terminal (kitty, wezterm,
+or ghostty). On other terminals, the popup will appear with placeholder
+cells but no image.
+
+==============================================================================
+9. TROUBLESHOOTING                             *latex-preview-troubleshooting*
+
+`:checkhealth latex-preview` ~
+        First stop. Most issues surface there.
+
+Popup doesn't appear ~
+        `:LatexPreview status` — verify "terminal supports graphics" is
+        true. If false, switch terminals.
+
+Specific equation fails ~
+        `:messages` to see the MathJax error. Switch to pdflatex compile
+        for that equation.
+
+Popup is too big or small ~
+        Adjust render.density.
+
+Daemon respawns repeatedly ~
+        mathjax-full not found. `:checkhealth` will tell you where it
+        looked. Set $LATEX_PREVIEW_MATHJAX_PATH or `npm install -g
+        mathjax-full@3`.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

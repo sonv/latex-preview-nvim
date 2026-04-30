@@ -1,0 +1,167 @@
+-- plugin/latex-preview.lua
+--
+-- :LatexPreview [subcommand]
+--
+-- With no argument: show the hover popup for the equation under the cursor
+-- (or close it if it's already visible).
+--
+-- Subcommands:
+--   show     - show hover (no-op if already shown)
+--   close    - close hover
+--   toggle   - default: show or close
+--   auto     - toggle automatic hover
+--   auto-on  - enable automatic hover
+--   auto-off - disable automatic hover
+--   clear    - delete cached SVG/PNG files
+--   stop     - stop the MathJax daemon
+--   status   - print daemon state
+
+if vim.g.loaded_latex_preview == 1 then return end
+vim.g.loaded_latex_preview = 1
+
+local function no_math()
+  vim.notify("latex-preview: no math expression under cursor", vim.log.levels.INFO)
+end
+
+local function status()
+  local daemon = require("latex-preview.daemon")
+  local hover = require("latex-preview.hover")
+  local lp = require("latex-preview")
+  print(string.format(
+    "latex-preview:\n"
+    .. "  daemon ready:    %s\n"
+    .. "  hover open:      %s\n"
+    .. "  auto hover:      %s\n"
+    .. "  terminal supports graphics: %s\n",
+    tostring(daemon.is_ready()),
+    tostring(hover.is_open()),
+    tostring(lp.auto_hover_enabled()),
+    tostring(hover.is_supported())
+  ))
+end
+
+local subcommands = {
+  show = function()
+    if not require("latex-preview").hover() then no_math() end
+  end,
+  close = function() require("latex-preview").close() end,
+  toggle = function()
+    local lp = require("latex-preview")
+    if lp.is_open() then lp.close() else
+      if not lp.hover() then no_math() end
+    end
+  end,
+  auto = function()
+    local state = require("latex-preview").toggle_auto_hover()
+    vim.notify("latex-preview: auto hover " .. (state and "enabled" or "disabled"))
+  end,
+  ["auto-on"] = function()
+    require("latex-preview").set_auto_hover(true)
+    vim.notify("latex-preview: auto hover enabled")
+  end,
+  ["auto-off"] = function()
+    require("latex-preview").set_auto_hover(false)
+    vim.notify("latex-preview: auto hover disabled")
+  end,
+  clear = function()
+    local n = require("latex-preview").clear_cache()
+    vim.notify("latex-preview: cleared " .. n .. " cached files")
+  end,
+  stop = function()
+    require("latex-preview").stop_daemon()
+    vim.notify("latex-preview: daemon stopped")
+  end,
+  status = status,
+  debug = function()
+    -- Dump everything that would be sent to the daemon for the equation
+    -- under the cursor. Useful for "why isn't my \newcommand picked up"
+    -- — copy this output and we can see whether the issue is in the
+    -- extractor, the parser, or somewhere else.
+    local buf = vim.api.nvim_get_current_buf()
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local config = require("latex-preview.config")
+    local parse = require("latex-preview.parse")
+    local extract = require("latex-preview.extract")
+
+    local equations = parse.find_equations(buf)
+    local crow, ccol = cursor[1] - 1, cursor[2]
+    local current_eq = nil
+    for _, eq in ipairs(equations) do
+      local after = (crow > eq.start_row)
+        or (crow == eq.start_row and ccol >= eq.start_col)
+      local before = (crow < eq.end_row)
+        or (crow == eq.end_row and ccol < eq.end_col)
+      if after and before then current_eq = eq; break end
+    end
+
+    local preamble = extract.get_preamble(buf)
+    local lines = {
+      "=== latex-preview debug ===",
+      "buffer:    " .. (vim.api.nvim_buf_get_name(buf) ~= "" and vim.api.nvim_buf_get_name(buf) or "(unsaved)"),
+      "filetype:  " .. vim.bo[buf].filetype,
+      "cursor:    row=" .. cursor[1] .. " col=" .. cursor[2],
+      "cache_dir: " .. config.get_cache_dir(buf),
+      "",
+      "equations found in buffer: " .. #equations,
+    }
+    for i, eq in ipairs(equations) do
+      lines[#lines + 1] = string.format(
+        "  [%d] rows %d-%d display=%s text=%q",
+        i, eq.start_row, eq.end_row, tostring(eq.display), eq.text:sub(1, 80))
+    end
+    lines[#lines + 1] = ""
+    if current_eq then
+      lines[#lines + 1] = "equation under cursor:"
+      lines[#lines + 1] = "  display: " .. tostring(current_eq.display)
+      lines[#lines + 1] = "  text:    " .. vim.inspect(current_eq.text)
+    else
+      lines[#lines + 1] = "equation under cursor: NONE"
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "extracted preamble (" .. #preamble .. " bytes):"
+    if preamble == "" then
+      lines[#lines + 1] = "  (empty)"
+    else
+      -- nvim_buf_set_lines requires each list element to be a single line,
+      -- so we split the multi-line preamble.
+      for _, pl in ipairs(vim.split(preamble, "\n", { plain = true })) do
+        lines[#lines + 1] = pl
+      end
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "=== end debug ==="
+
+    -- Open in a scratch buffer so the user can copy/paste from it.
+    vim.cmd("new")
+    local out_buf = vim.api.nvim_get_current_buf()
+    vim.bo[out_buf].buftype = "nofile"
+    vim.bo[out_buf].bufhidden = "wipe"
+    vim.bo[out_buf].swapfile = false
+    vim.api.nvim_buf_set_lines(out_buf, 0, -1, false, lines)
+  end,
+}
+
+vim.api.nvim_create_user_command("LatexPreview", function(opts)
+  local sub = opts.fargs[1] or "toggle"
+  local fn = subcommands[sub]
+  if not fn then
+    vim.notify("[latex-preview] unknown subcommand: " .. sub, vim.log.levels.ERROR)
+    return
+  end
+  fn()
+end, {
+  nargs = "?",
+  complete = function(_, line)
+    local args = vim.split(line, "%s+", { trimempty = true })
+    if #args <= 2 then
+      local prefix = args[2] or ""
+      local matches = {}
+      for k in pairs(subcommands) do
+        if k:sub(1, #prefix) == prefix then matches[#matches + 1] = k end
+      end
+      table.sort(matches)
+      return matches
+    end
+    return {}
+  end,
+})
