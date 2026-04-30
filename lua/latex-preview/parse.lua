@@ -213,7 +213,7 @@ local function regex_extract(buf)
 
   local i = 1
   while i <= #source do
-    if unescaped_at(i) and not consumed[i] then
+    if unescaped_at(i) and not_consumed(i, i) then
       -- Find closing $ on the same line
       local j = i + 1
       local closed = nil

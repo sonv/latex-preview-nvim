@@ -76,8 +76,6 @@ async function bootMathJax() {
     path.join(process.env.HOME || "", ".npm-global/lib/node_modules/mathjax-full"),
     path.join(process.env.HOME || "",
       ".nvm/versions/node/" + process.version + "/lib/node_modules/mathjax-full"),
-    path.join(process.env.HOME || "",
-      ".nvm/versions/node/current/lib/node_modules/mathjax-full"),
   ]) addCandidate(p);
   try {
     const npmRoot = execFileSync("npm", ["root", "-g"], {

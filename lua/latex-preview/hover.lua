@@ -179,7 +179,7 @@ local function register_autocmds(buf)
     group = group,
     buffer = buf,
     callback = function()
-      close_current()
+      if current and current.buf == buf then close_current() end
       return true
     end,
   })
