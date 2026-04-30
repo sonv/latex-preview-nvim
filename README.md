@@ -1,6 +1,6 @@
 # latex-preview.nvim
 
-[Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.]
+## Vibe code project: I used Claude to make initial code and ChatGPT 5.5 to optimize.
 
 Hover-style LaTeX math preview for Neovim. Press a key inside a math
 expression and a small floating window pops up with the rendered equation —
