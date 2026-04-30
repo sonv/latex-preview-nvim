@@ -217,8 +217,8 @@ require("latex-preview").setup({
       if hl and hl.fg then return string.format("#%06x", hl.fg) end
       return "#000000"
     end,
-    font_size = 11,            -- inline MathJax font size in pixels
-    display_font_size = 11,    -- display MathJax font size in pixels
+    font_size = 12,            -- inline MathJax font size in pixels
+    display_font_size = 12,    -- display MathJax font size in pixels
     display_math_style = "text", -- "text" for compact previews, "display" for LaTeX display style
     pad_to_cells = true,       -- prevent terminal-cell rounding from enlarging short equations
     density = 300,             -- DPI for SVG -> PNG

@@ -34,9 +34,10 @@ local render = require("latex-preview.render")
 ---@field live_png string?
 local current = nil ---@type LatexPreview.HoverState?
 local next_render_id = 0
+local active_render_id = 0
 local autocmd_buf = nil
 local refresh_timer = nil
-local source_keymaps = {} ---@type table<integer, boolean>
+local source_keymaps = {} ---@type table<integer, table<string, table|false>>
 local auto_buffers = {} ---@type table<integer, boolean>
 
 local CLOSE_KEYS = { "q", "<Esc>" }
@@ -59,14 +60,32 @@ local function close_current()
   pcall(function() current.img:close() end)
   if current.live_svg then pcall(os.remove, current.live_svg) end
   if current.live_png then pcall(os.remove, current.live_png) end
-  for buf in pairs(source_keymaps) do
+  for buf, maps in pairs(source_keymaps) do
     if vim.api.nvim_buf_is_valid(buf) then
       for _, lhs in ipairs(CLOSE_KEYS) do
         pcall(vim.keymap.del, "n", lhs, { buffer = buf })
+        local old = maps[lhs]
+        if old then
+          local opts = {
+            buffer = buf,
+            expr = old.expr == 1,
+            noremap = old.noremap == 1,
+            nowait = old.nowait == 1,
+            script = old.script == 1,
+            silent = old.silent == 1,
+            desc = old.desc,
+          }
+          if old.callback then
+            pcall(vim.keymap.set, "n", lhs, old.callback, opts)
+          else
+            pcall(vim.keymap.set, "n", lhs, old.rhs or "", opts)
+          end
+        end
       end
     end
     source_keymaps[buf] = nil
   end
+  active_render_id = active_render_id + 1
   autocmd_buf = nil
   current = nil
 end
@@ -84,8 +103,17 @@ local function map_close_keys(win, source_buf)
     })
   end
   if source_buf and vim.api.nvim_buf_is_valid(source_buf) and not source_keymaps[source_buf] then
-    source_keymaps[source_buf] = true
+    source_keymaps[source_buf] = {}
     for _, lhs in ipairs(CLOSE_KEYS) do
+      for _, map in ipairs(vim.api.nvim_buf_get_keymap(source_buf, "n")) do
+        if map.lhs == lhs then
+          source_keymaps[source_buf][lhs] = map
+          break
+        end
+      end
+      if source_keymaps[source_buf][lhs] == nil then
+        source_keymaps[source_buf][lhs] = false
+      end
       vim.keymap.set("n", lhs, function()
         close_current()
       end, {
@@ -122,6 +150,20 @@ local function equation_under_cursor(buf)
     if cursor_in_equation(eq) then return eq end
   end
   return nil
+end
+
+local function render_signature(preamble, eq)
+  return table.concat({
+    preamble or "",
+    eq.text or "",
+    eq.display and "1" or "0",
+    config.get_fg(),
+    tostring(config.options.render.font_size),
+    tostring(config.options.render.display_font_size),
+    tostring(config.options.render.display_math_style),
+    tostring(config.options.render.pad_to_cells),
+    tostring(config.options.render.density),
+  }, "\n--latex-preview--\n")
 end
 
 local function place_under_cursor(win, source_win)
@@ -352,14 +394,7 @@ function M.open()
     buf = buf,  -- so render.lua resolves cache_dir per-buffer
     live = true,
   }
-  local signature = table.concat({
-    preamble or "",
-    eq.text or "",
-    eq.display and "1" or "0",
-    tostring(config.options.render.font_size),
-    tostring(config.options.render.display_font_size),
-    tostring(config.options.render.display_math_style),
-  }, "\n--latex-preview--\n")
+  local signature = render_signature(preamble, eq)
   if current and current.signature == signature then
     current.eq = eq
     show_under_cursor(current.win, source_win)
@@ -368,6 +403,7 @@ function M.open()
   end
   next_render_id = next_render_id + 1
   local render_id = next_render_id
+  active_render_id = render_id
   req.live_id = render_id
   if current then
     current.render_id = render_id
@@ -377,7 +413,12 @@ function M.open()
   end
 
   render.render(req, function(err, png_path)
+    if active_render_id ~= render_id then return end
     if current and current.render_id ~= render_id then return end
+    if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(source_win) then return end
+    if vim.api.nvim_get_current_buf() ~= buf or vim.api.nvim_get_current_win() ~= source_win then return end
+    local live_eq = equation_under_cursor(buf)
+    if not live_eq or render_signature(extract.get_preamble(buf), live_eq) ~= signature then return end
     if err or not png_path then
       vim.notify("[latex-preview] " .. (err or "render failed"), vim.log.levels.WARN)
       return
@@ -392,11 +433,7 @@ function M.open()
       pcall(function() current.img:update() end)
       return
     end
-    local old_svg = current and current.live_svg
-    local old_png = current and current.live_png
     close_current()
-    if old_svg then pcall(os.remove, old_svg) end
-    if old_png then pcall(os.remove, old_png) end
 
     -- Open a floating Snacks.win. We piggy-back on snacks's "snacks_image"
     -- style so it shares config (border, winblend, padding) with snacks's

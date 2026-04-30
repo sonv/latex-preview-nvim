@@ -11,6 +11,8 @@
 
 local M = {}
 
+local util = require("latex-preview.util")
+
 -- Renamed from `ok`/`warn`/`err` to `report_*` because `local ok` is an
 -- extremely common idiom for `pcall` results, and shadowing the helper
 -- with a boolean inside any check function is silent until that check
@@ -155,28 +157,8 @@ local function check_treesitter()
         "Without it, latex-preview falls back to a regex-based scan." })
     return
   end
-  local function has_parser(lang)
-    if type(parsers.has_parser) == "function" then
-      local ok, found = pcall(parsers.has_parser, lang)
-      if ok then return found == true end
-    end
-    local ts_lang = vim.treesitter and vim.treesitter.language
-    if ts_lang and type(ts_lang.has_parser) == "function" then
-      local ok, found = pcall(ts_lang.has_parser, lang)
-      if ok then return found == true end
-    end
-    if ts_lang and type(ts_lang.inspect) == "function" then
-      local ok, info = pcall(ts_lang.inspect, lang)
-      return ok and type(info) == "table"
-    end
-    if ts_lang and type(ts_lang.add) == "function" then
-      local ok, found = pcall(ts_lang.add, lang)
-      return ok and found == true
-    end
-    return false
-  end
   for _, lang in ipairs({ "latex", "markdown_inline" }) do
-    if has_parser(lang) then
+    if util.has_ts_parser(parsers, lang) then
       report_ok("treesitter parser: " .. lang)
     else
       report_warn("treesitter parser missing: " .. lang,

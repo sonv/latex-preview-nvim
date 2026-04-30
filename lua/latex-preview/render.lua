@@ -25,7 +25,7 @@ end
 ---@param req { preamble: string, equation: string, display: boolean }
 ---@return string  cache key suitable for use as a filename stem
 local function cache_key(req)
-  local renderer_version = "raster-v6"
+  local renderer_version = "raster-v7"
   local fg = config.get_fg()
   local font_size = effective_font_size(req)
   local density = config.options.render.density
@@ -42,7 +42,7 @@ local function cache_key(req)
     tostring(config.options.render.pad_to_cells),
     tostring(density),
     renderer_version,
-  }, "\n--SNACKS--\n")
+  }, "\n--latex-preview--\n")
   return vim.fn.sha256(raw):sub(1, 16)
 end
 

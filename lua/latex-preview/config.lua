@@ -97,8 +97,8 @@ M.defaults = {
       if hl and hl.fg then return string.format("#%06x", hl.fg) end
       return "#000000"
     end,
-    font_size = 11,
-    display_font_size = 11,
+    font_size = 12,
+    display_font_size = 12,
     display_math_style = "text",
     pad_to_cells = true,
     density = 300,

@@ -16,6 +16,10 @@ local function snacks_image_config()
   return snacks, snacks.image.config
 end
 
+-- When hover.auto_open is nil (the default), auto-hover follows Snacks'
+-- image.doc.float setting. This lets users control both snacks image hover
+-- and this plugin's auto-hover with a single toggle. Set hover.auto_open
+-- explicitly to true/false to decouple from Snacks' preference.
 local function snacks_doc_float_enabled()
   local _, image_config = snacks_image_config()
   local doc = image_config and image_config.doc or {}

@@ -79,8 +79,9 @@ Example: >lua
         stop      Stop the MathJax daemon (auto-respawns on next render).
         status    Print daemon and popup state.
 
-The popup auto-closes on cursor move, leaving the buffer, or entering
-insert mode.
+The popup auto-closes when the cursor leaves the current equation or when
+you leave/wipe the source buffer. While the cursor remains inside the same
+equation, it live-updates in normal and insert mode.
 
 ==============================================================================
 5. KEYMAPPING                                       *latex-preview-keymapping*
@@ -112,8 +113,9 @@ Default config: >lua
       enabled = true,
       filetypes = { "tex", "latex", "markdown", "rmd", "quarto" },
       setup_keymap = false,
+      keymap = "<leader>ih",
       cache = false,
-      cache_dir = vim.fn.stdpath("cache") .. "/latex-preview",
+      cache_dir = "aux",
 
       daemon = {
         cmd = nil,
@@ -130,8 +132,8 @@ Default config: >lua
 
       render = {
         fg = function() ... end,    -- current Normal fg
-        font_size = 11,
-        display_font_size = 11,
+        font_size = 12,
+        display_font_size = 12,
         display_math_style = "text",
         pad_to_cells = true,
         density = 300,

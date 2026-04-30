@@ -15,6 +15,8 @@
 
 local M = {}
 
+local util = require("latex-preview.util")
+
 ---@class LatexPreview.Equation
 ---@field start_row integer 0-indexed inclusive
 ---@field start_col integer 0-indexed inclusive
@@ -36,36 +38,12 @@ local TS_QUERIES = {
   ]],
 }
 
----@param parsers table
----@param lang string
----@return boolean
-local function has_ts_parser(parsers, lang)
-  if type(parsers.has_parser) == "function" then
-    local ok, found = pcall(parsers.has_parser, lang)
-    if ok then return found == true end
-  end
-  local ts_lang = vim.treesitter and vim.treesitter.language
-  if ts_lang and type(ts_lang.has_parser) == "function" then
-    local ok, found = pcall(ts_lang.has_parser, lang)
-    if ok then return found == true end
-  end
-  if ts_lang and type(ts_lang.inspect) == "function" then
-    local ok, info = pcall(ts_lang.inspect, lang)
-    return ok and type(info) == "table"
-  end
-  if ts_lang and type(ts_lang.add) == "function" then
-    local ok, found = pcall(ts_lang.add, lang)
-    return ok and found == true
-  end
-  return false
-end
-
 ---@param buf integer
 ---@param lang string
 ---@return LatexPreview.Equation[]?
 local function ts_extract(buf, lang)
   local ok, parsers = pcall(require, "nvim-treesitter.parsers")
-  if not ok or not has_ts_parser(parsers, lang) then return nil end
+  if not ok or not util.has_ts_parser(parsers, lang) then return nil end
 
   local parser = vim.treesitter.get_parser(buf, lang)
   if not parser then return nil end
@@ -75,7 +53,8 @@ local function ts_extract(buf, lang)
   local query_str = TS_QUERIES[lang]
   if not query_str then return nil end
 
-  local query = vim.treesitter.query.parse(lang, query_str)
+  local ok_query, query = pcall(vim.treesitter.query.parse, lang, query_str)
+  if not ok_query then return nil end
   local results = {}
   for id, node in query:iter_captures(tree:root(), buf) do
     local cap = query.captures[id]
@@ -257,6 +236,37 @@ local function regex_extract(buf)
   return results
 end
 
+---@param equations LatexPreview.Equation[]
+---@param candidate LatexPreview.Equation
+---@return boolean
+local function overlaps_any(equations, candidate)
+  for _, eq in ipairs(equations) do
+    local candidate_before = (candidate.end_row < eq.start_row)
+      or (candidate.end_row == eq.start_row and candidate.end_col <= eq.start_col)
+    local candidate_after = (candidate.start_row > eq.end_row)
+      or (candidate.start_row == eq.end_row and candidate.start_col >= eq.end_col)
+    if not candidate_before and not candidate_after then return true end
+  end
+  return false
+end
+
+---@param primary LatexPreview.Equation[]
+---@param fallback LatexPreview.Equation[]
+---@return LatexPreview.Equation[]
+local function merge_non_overlapping(primary, fallback)
+  local results = vim.deepcopy(primary)
+  for _, eq in ipairs(fallback) do
+    if not overlaps_any(results, eq) then
+      results[#results + 1] = eq
+    end
+  end
+  table.sort(results, function(a, b)
+    if a.start_row ~= b.start_row then return a.start_row < b.start_row end
+    return a.start_col < b.start_col
+  end)
+  return results
+end
+
 -- Public API ----------------------------------------------------------------
 
 ---@param buf integer
@@ -269,7 +279,7 @@ function M.find_equations(buf)
     if r then return r end
   elseif ft == "markdown" or ft == "rmd" or ft == "quarto" then
     local r = ts_extract(buf, "markdown_inline")
-    if r then return r end
+    if r then return merge_non_overlapping(r, regex_extract(buf)) end
   end
   return regex_extract(buf)
 end
