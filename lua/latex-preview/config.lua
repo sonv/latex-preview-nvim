@@ -60,6 +60,8 @@ local M = {}
 ---@field disable_document_images boolean Disable snacks.image's document inline/auto previewer.
 ---@field clean_info_on_exit boolean Empty snacks.image cache directory on VimLeavePre.
 ---@field max_cache_files integer Maximum snacks.image cache entries to keep, trimming oldest entries first.
+---@field max_cache_bytes integer Maximum snacks.image cache bytes to keep, trimming oldest groups first.
+---@field cache_grace_ms integer Do not trim cache entries modified within this many milliseconds.
 
 ---@type LatexPreview.Config
 M.defaults = {
@@ -156,6 +158,8 @@ M.defaults = {
     -- Kept under the old option name for compatibility.
     clean_info_on_exit = true,
     max_cache_files = 100,
+    max_cache_bytes = 50 * 1024 * 1024,
+    cache_grace_ms = 5000,
   },
 }
 

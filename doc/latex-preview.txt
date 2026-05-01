@@ -212,6 +212,8 @@ Default config: >lua
         disable_document_images = true,
         clean_info_on_exit = true,
         max_cache_files = 100,
+        max_cache_bytes = 50 * 1024 * 1024,
+        cache_grace_ms = 5000,
       },
     }
 <
@@ -306,9 +308,21 @@ snacks.clean_info_on_exit ~
 snacks.max_cache_files ~
         Maximum number of entries allowed in the Snacks image cache
         directory. When the directory exceeds this many entries,
-        latex-preview.nvim removes the oldest entries and keeps the most
-        recent ones. Set to 0 or a negative value to disable the limit.
-        Defaults to 100.
+        latex-preview.nvim removes the oldest cache groups and keeps the
+        most recent ones. Set to 0 or a negative value to disable the file
+        count limit. Defaults to 100.
+
+snacks.max_cache_bytes ~
+        Maximum total size, in bytes, allowed in the Snacks image cache
+        directory. When the directory exceeds this size, latex-preview.nvim
+        removes the oldest cache groups until both size and file-count
+        limits are satisfied. Set to 0 or a negative value to disable the
+        byte limit. Defaults to 50 * 1024 * 1024.
+
+snacks.cache_grace_ms ~
+        Cache groups modified within this many milliseconds are not trimmed.
+        This avoids removing files that Snacks may still be writing or
+        displaying. Defaults to 5000.
 
 ==============================================================================
 7. HOW IT WORKS                                       *latex-preview-internals*

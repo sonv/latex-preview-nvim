@@ -49,7 +49,7 @@ All notable changes to this project will be documented in this file.
 - Avoided deleting cached render files from hover cleanup paths.
 - Added cleanup for stale temporary render directories.
 - Changed exit cleanup to empty the Snacks image cache directory instead of only deleting `.info` metadata files.
-- Added `snacks.max_cache_files` to keep the Snacks image cache at 100 entries by default, trimming the oldest entries first.
+- Added grouped Snacks image-cache trimming with `snacks.max_cache_files`, `snacks.max_cache_bytes`, and `snacks.cache_grace_ms`.
 - Extended `:LatexPreview clear` to remove stale theorem-preview `.tex`, `.pdf`, `.log`, and `.aux` artifacts from older cache entries.
 - Added warnings when `render.pad_to_cells = true` but ImageMagick is unavailable.
 - Improved `:checkhealth latex-preview` detection for nvm-managed global `mathjax-full`.

@@ -310,6 +310,11 @@ require("latex-preview").setup({
     -- Keep at most this many Snacks image cache entries, trimming oldest first.
     -- Set <=0 to disable.
     max_cache_files = 100,
+    -- Also trim oldest cache groups when the directory exceeds this size.
+    -- Set <=0 to disable.
+    max_cache_bytes = 50 * 1024 * 1024,
+    -- Never trim cache groups modified within this grace period.
+    cache_grace_ms = 5000,
   },
 
   -- Note: popup sizing, border, padding, and similar visual options still

@@ -153,57 +153,87 @@ local function cleanup_snacks_image_cache()
   end
 end
 
-local function count_snacks_image_cache_entries()
-  local dir = snacks_image_cache_dir()
-  local handle = uv.fs_scandir(dir)
-  if not handle then return 0 end
-  local count = 0
-  while true do
-    local name = uv.fs_scandir_next(handle)
-    if not name then break end
-    count = count + 1
-  end
-  return count
+local function snacks_cache_group(name)
+  return name
+    :gsub("%.info$", "")
+    :gsub("%.[^.]+$", "")
 end
 
-local function trim_snacks_image_cache(max_files)
+local function scan_snacks_image_cache()
   local dir = snacks_image_cache_dir()
   local handle = uv.fs_scandir(dir)
-  if not handle then return end
-  local entries = {}
+  if not handle then return {}, 0, 0 end
+  local groups = {}
+  local total_files, total_bytes = 0, 0
   while true do
     local name = uv.fs_scandir_next(handle)
     if not name then break end
     local path = dir .. "/" .. name
     local stat = uv.fs_stat(path)
     if stat then
-      entries[#entries + 1] = {
-        path = path,
-        mtime = stat.mtime and stat.mtime.sec or 0,
-        nsec = stat.mtime and stat.mtime.nsec or 0,
-      }
+      local key = snacks_cache_group(name)
+      groups[key] = groups[key] or { files = {}, count = 0, bytes = 0, mtime = 0, nsec = 0 }
+      local group = groups[key]
+      local size = stat.size or 0
+      local mtime = stat.mtime and stat.mtime.sec or 0
+      local nsec = stat.mtime and stat.mtime.nsec or 0
+      group.files[#group.files + 1] = path
+      group.count = group.count + 1
+      group.bytes = group.bytes + size
+      if mtime > group.mtime or (mtime == group.mtime and nsec > group.nsec) then
+        group.mtime = mtime
+        group.nsec = nsec
+      end
+      total_files = total_files + 1
+      total_bytes = total_bytes + size
     end
   end
-  if #entries <= max_files then return end
+  return groups, total_files, total_bytes
+end
+
+local function trim_snacks_image_cache(max_files, max_bytes, grace_ms)
+  local groups, total_files, total_bytes = scan_snacks_image_cache()
+  local over_files = max_files > 0 and total_files > max_files
+  local over_bytes = max_bytes > 0 and total_bytes > max_bytes
+  if not over_files and not over_bytes then return end
+
+  local now_sec = os.time()
+  local entries = {}
+  for _, group in pairs(groups) do
+    local age_ms = (now_sec - group.mtime) * 1000
+    if age_ms >= grace_ms then
+      entries[#entries + 1] = group
+    end
+  end
   table.sort(entries, function(a, b)
     if a.mtime ~= b.mtime then return a.mtime > b.mtime end
     return a.nsec > b.nsec
   end)
-  for i = max_files + 1, #entries do
-    vim.fn.delete(entries[i].path, "rf")
+  while #entries > 0
+      and ((max_files > 0 and total_files > max_files)
+        or (max_bytes > 0 and total_bytes > max_bytes)) do
+    local group = table.remove(entries)
+    for _, path in ipairs(group.files) do
+      vim.fn.delete(path, "rf")
+    end
+    total_files = total_files - group.count
+    total_bytes = total_bytes - group.bytes
   end
 end
 
 local function enforce_snacks_image_cache_limit()
   local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
-  if max_files <= 0 then return end
-  if count_snacks_image_cache_entries() > max_files then
-    trim_snacks_image_cache(max_files)
-  end
+  local max_bytes = tonumber(config.options.snacks and config.options.snacks.max_cache_bytes) or 0
+  local grace_ms = tonumber(config.options.snacks and config.options.snacks.cache_grace_ms) or 0
+  if max_files <= 0 and max_bytes <= 0 then return end
+  trim_snacks_image_cache(max_files, max_bytes, math.max(0, grace_ms))
 end
 
 local function schedule_snacks_image_cache_limit_check()
-  if not (config.options.snacks and config.options.snacks.max_cache_files) then return end
+  if not config.options.snacks then return end
+  local max_files = tonumber(config.options.snacks.max_cache_files) or 0
+  local max_bytes = tonumber(config.options.snacks.max_cache_bytes) or 0
+  if max_files <= 0 and max_bytes <= 0 then return end
   if not snacks_cache_timer then snacks_cache_timer = assert(uv.new_timer()) end
   snacks_cache_timer:stop()
   snacks_cache_timer:start(250, 0, function()
@@ -221,7 +251,8 @@ end
 
 local function install_snacks_cache_limit()
   local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
-  if max_files <= 0 then return end
+  local max_bytes = tonumber(config.options.snacks and config.options.snacks.max_cache_bytes) or 0
+  if max_files <= 0 and max_bytes <= 0 then return end
   local dir = snacks_image_cache_dir()
   vim.fn.mkdir(dir, "p")
   enforce_snacks_image_cache_limit()
