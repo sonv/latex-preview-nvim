@@ -56,6 +56,9 @@ local function strip_math_delimiters(text)
     local body = stripped
       :gsub("^\\begin%s*{" .. pat .. "}", "", 1)
       :gsub("\\end%s*{" .. pat .. "}%s*$", "", 1)
+    if body ~= stripped and env:gsub("%*$", "") == "alignat" then
+      body = body:gsub("^%s*{%s*%d+%s*}", "", 1)
+    end
     if body ~= stripped then stripped = body end
   end
 
@@ -171,12 +174,15 @@ local function regex_extract(buf)
     { pat = "\\%[(.-)\\%]",          display = true,  kind = "delim_match" },
     -- \(...\) inline
     { pat = "\\%((.-)\\%)",          display = false, kind = "delim_match" },
-    -- Math environments. We match a generic \begin{name}...\end{name} where
-    -- name is one of equation/align/gather/multline (with optional star).
+    -- Math environments with optional star. alignat has one required
+    -- environment argument; it is delimiter syntax, not equation content.
     { pat = "\\begin{equation%*?}(.-)\\end{equation%*?}", display = true, kind = "delim_match" },
     { pat = "\\begin{align%*?}(.-)\\end{align%*?}",       display = true, kind = "delim_match" },
+    { pat = "\\begin{alignat%*?}%s*%b{}(.-)\\end{alignat%*?}", display = true, kind = "delim_match" },
+    { pat = "\\begin{flalign%*?}(.-)\\end{flalign%*?}",   display = true, kind = "delim_match" },
     { pat = "\\begin{gather%*?}(.-)\\end{gather%*?}",     display = true, kind = "delim_match" },
     { pat = "\\begin{multline%*?}(.-)\\end{multline%*?}", display = true, kind = "delim_match" },
+    { pat = "\\begin{eqnarray%*?}(.-)\\end{eqnarray%*?}", display = true, kind = "delim_match" },
   }
 
   for _, p in ipairs(patterns) do

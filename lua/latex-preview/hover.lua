@@ -551,6 +551,7 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
   if #eqs == 0 then return end
   local snacks = require("snacks")
   local preamble = extract.get_preamble(source_buf)
+  local preamble_hash = vim.fn.sha256(preamble)
   local popup = config.options.popup or {}
   local max_width = popup.max_width or math.max(1, vim.o.columns - 4)
   local max_height = popup.max_height or math.max(1, vim.o.lines - 4)
@@ -570,8 +571,13 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
       if not current or current.render_id ~= render_id or current.win ~= win then return end
       if not vim.api.nvim_buf_is_valid(win.buf) then return end
       if not vim.api.nvim_buf_is_valid(source_buf) or not vim.api.nvim_win_is_valid(source_win) then return end
-      local live_target = target_under_cursor(source_buf)
+      local ok_target, live_target = pcall(vim.api.nvim_win_call, source_win, function()
+        if vim.api.nvim_get_current_buf() ~= source_buf then return nil end
+        return target_under_cursor(source_buf)
+      end)
+      if not ok_target then return end
       if not live_target or live_target.signature ~= target.signature then return end
+      if vim.fn.sha256(extract.get_preamble(source_buf)) ~= preamble_hash then return end
 
       local placement_opts = snacks.config.merge({}, snacks.image.config.doc, {
         inline = true,
@@ -600,12 +606,20 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
 end
 
 local function show_mixed_text_target(buf, source_win, target)
-  local signature = target.signature or table.concat(target.lines or {}, "\n")
+  local preamble = extract.get_preamble(buf)
+  local signature = table.concat({
+    target.signature or table.concat(target.lines or {}, "\n"),
+    vim.fn.sha256(preamble),
+  }, "\n--latex-preview--\n")
   if current and current.type == "mixed_text" and current.signature == signature then
+    current.buf = buf
+    current.source_win = source_win
     show_under_cursor(current.win, source_win)
     for _, img in ipairs(current.imgs or {}) do
       pcall(function() img:update() end)
     end
+    map_close_keys(current.win, buf)
+    register_autocmds(buf)
     return true
   end
   close_current()
@@ -633,7 +647,11 @@ end
 function show_text_target(buf, source_win, target)
   local signature = target.signature or table.concat(target.lines or {}, "\n")
   if current and current.type == "text" and current.signature == signature then
+    current.buf = buf
+    current.source_win = source_win
     show_under_cursor(current.win, source_win)
+    map_close_keys(current.win, buf)
+    register_autocmds(buf)
     return true
   end
   close_current()

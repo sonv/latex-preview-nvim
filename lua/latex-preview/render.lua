@@ -207,7 +207,6 @@ end
 ---@param png_path string
 ---@param cb fun(err: string?)
 local function pad_to_cells(png_path, cb)
-  if not config.options.render.pad_to_cells then return cb(nil) end
   local ok, snacks = pcall(require, "snacks")
   if not ok or not snacks.image or not snacks.image.terminal then return cb(nil) end
   local term = snacks.image.terminal.size()

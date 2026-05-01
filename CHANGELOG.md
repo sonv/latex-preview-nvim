@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+Rolling changes are listed newest first by date.
+
+## 2026-05-01
+
 ### Added
 
 - Added hover previews for referenced equations under `\ref`, `\eqref`, `\autoref`, `\cref`, `\Cref`, `\vref`, and `\Vref`.
@@ -39,6 +43,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Fixed multi-label reference hovers so `\ref{a,b}` / `\cref{a,b}` preview the label under the cursor instead of always previewing the first label.
+- Fixed `\declaretheorem[name=...]{env}` detection so custom theorem-like environments are recognized by their environment name.
+- Fixed `alignat`, `flalign`, and `eqnarray` discovery in the regex parser, including stripping `alignat`'s required column-count argument from rendered math.
+- Fixed mixed theorem-preview async validation to check the original source window instead of whichever window is current when rendering finishes.
+- Fixed reused text and mixed theorem popups to refresh their source buffer/window, close keymaps, and autocmds.
+- Fixed mixed theorem preview reuse to include the extracted preamble hash, preventing stale math images after macro changes.
+- Fixed Snacks image-cache trimming so an over-limit cache schedules a retry after the grace period instead of staying over limit until another filesystem event.
+- Fixed request-level `pad_to_cells = true` so it can override a global `render.pad_to_cells = false`.
 - Fixed Treesitter math-environment handling so `\begin{...}...\end{...}` wrappers are stripped before sending equations to MathJax.
 - Fixed escaped `$` parsing by counting consecutive preceding backslashes.
 - Fixed `%` comment stripping by counting consecutive preceding backslashes.

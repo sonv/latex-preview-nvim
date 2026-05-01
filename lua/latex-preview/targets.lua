@@ -145,10 +145,9 @@ local function equation_source(buf, eq)
 end
 
 local function reference_label_under_cursor(buf)
-  local cmd = command_under_cursor(buf, function(name) return REF_COMMANDS[name] == true end)
+  local cmd, _, col = command_under_cursor(buf, function(name) return REF_COMMANDS[name] == true end)
   if not cmd then return nil end
-  local label = split_csv(cmd.arg)[1]
-  return label
+  return item_at_cursor(cmd, col)
 end
 
 function M.reference_under_cursor(buf)
@@ -189,7 +188,8 @@ local function theorem_envs_from_preamble(lines)
         envs[env:gsub("%*$", "")] = true
       end
     end
-    local declared = line:match("\\declaretheorem.-{%s*([%a*]+)%s*}")
+    local declared = line:match("\\declaretheorem%s*%b[]%s*{%s*([%a*]+)%s*}")
+      or line:match("\\declaretheorem%s*{%s*([%a*]+)%s*}")
     if declared then envs[declared:gsub("%*$", "")] = true end
   end
   return envs

@@ -8,6 +8,7 @@ local config = require("latex-preview.config")
 local uv = vim.uv or vim.loop
 local snacks_cache_watcher = nil
 local snacks_cache_timer = nil
+local schedule_snacks_image_cache_limit_check
 
 local function is_supported_filetype(ft)
   return vim.tbl_contains(config.options.filetypes or {}, ft)
@@ -199,10 +200,14 @@ local function trim_snacks_image_cache(max_files, max_bytes, grace_ms)
 
   local now_sec = os.time()
   local entries = {}
+  local next_retry_ms = nil
   for _, group in pairs(groups) do
     local age_ms = (now_sec - group.mtime) * 1000
     if age_ms >= grace_ms then
       entries[#entries + 1] = group
+    else
+      local remaining = grace_ms - age_ms
+      next_retry_ms = next_retry_ms and math.min(next_retry_ms, remaining) or remaining
     end
   end
   table.sort(entries, function(a, b)
@@ -219,6 +224,11 @@ local function trim_snacks_image_cache(max_files, max_bytes, grace_ms)
     total_files = total_files - group.count
     total_bytes = total_bytes - group.bytes
   end
+  if ((max_files > 0 and total_files > max_files)
+      or (max_bytes > 0 and total_bytes > max_bytes))
+      and next_retry_ms then
+    return math.max(1, next_retry_ms)
+  end
 end
 
 local function enforce_snacks_image_cache_limit()
@@ -226,17 +236,20 @@ local function enforce_snacks_image_cache_limit()
   local max_bytes = tonumber(config.options.snacks and config.options.snacks.max_cache_bytes) or 0
   local grace_ms = tonumber(config.options.snacks and config.options.snacks.cache_grace_ms) or 0
   if max_files <= 0 and max_bytes <= 0 then return end
-  trim_snacks_image_cache(max_files, max_bytes, math.max(0, grace_ms))
+  local retry_ms = trim_snacks_image_cache(max_files, max_bytes, math.max(0, grace_ms))
+  if retry_ms and schedule_snacks_image_cache_limit_check then
+    schedule_snacks_image_cache_limit_check(retry_ms)
+  end
 end
 
-local function schedule_snacks_image_cache_limit_check()
+schedule_snacks_image_cache_limit_check = function(delay_ms)
   if not config.options.snacks then return end
   local max_files = tonumber(config.options.snacks.max_cache_files) or 0
   local max_bytes = tonumber(config.options.snacks.max_cache_bytes) or 0
   if max_files <= 0 and max_bytes <= 0 then return end
   if not snacks_cache_timer then snacks_cache_timer = assert(uv.new_timer()) end
   snacks_cache_timer:stop()
-  snacks_cache_timer:start(250, 0, function()
+  snacks_cache_timer:start(math.max(1, math.ceil(delay_ms or 250)), 0, function()
     vim.schedule(enforce_snacks_image_cache_limit)
   end)
 end
