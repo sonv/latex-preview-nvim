@@ -19,6 +19,7 @@ local M = {}
 ---@field popup LatexPreview.PopupConfig
 ---@field hover LatexPreview.HoverConfig
 ---@field references LatexPreview.FeatureToggleConfig
+---@field theorem_references LatexPreview.FeatureToggleConfig
 ---@field citations LatexPreview.FeatureToggleConfig
 ---@field snacks LatexPreview.SnacksConfig
 
@@ -57,6 +58,8 @@ local M = {}
 
 ---@class LatexPreview.SnacksConfig
 ---@field disable_document_images boolean Disable snacks.image's document inline/auto previewer.
+---@field clean_info_on_exit boolean Empty snacks.image cache directory on VimLeavePre.
+---@field max_cache_files integer Maximum snacks.image cache entries to keep, trimming oldest entries first.
 
 ---@type LatexPreview.Config
 M.defaults = {
@@ -134,6 +137,11 @@ M.defaults = {
     toggle_keymap = "<leader>ir",
   },
 
+  theorem_references = {
+    enabled = true,
+    toggle_keymap = "<leader>it",
+  },
+
   citations = {
     enabled = true,
     toggle_keymap = "<leader>ic",
@@ -145,6 +153,9 @@ M.defaults = {
     -- renders every math expression/image inline by default, which is a
     -- different feature and conflicts with this plugin's toggle-only UX.
     disable_document_images = true,
+    -- Kept under the old option name for compatibility.
+    clean_info_on_exit = true,
+    max_cache_files = 100,
   },
 }
 

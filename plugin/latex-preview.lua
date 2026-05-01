@@ -15,6 +15,9 @@
 --   refs     - toggle referenced-equation previews
 --   refs-on  - enable referenced-equation previews
 --   refs-off - disable referenced-equation previews
+--   thms     - toggle theorem-like reference previews
+--   thms-on  - enable theorem-like reference previews
+--   thms-off - disable theorem-like reference previews
 --   cites    - toggle citation previews
 --   cites-on - enable citation previews
 --   cites-off - disable citation previews
@@ -39,12 +42,14 @@ local function status()
     .. "  hover open:      %s\n"
     .. "  auto hover:      %s\n"
     .. "  references:      %s\n"
+    .. "  theorem refs:    %s\n"
     .. "  citations:       %s\n"
     .. "  terminal supports graphics: %s\n",
     tostring(daemon.is_ready()),
     tostring(hover.is_open()),
     tostring(lp.auto_hover_enabled()),
     tostring(lp.references_enabled()),
+    tostring(lp.theorem_references_enabled()),
     tostring(lp.citations_enabled()),
     tostring(hover.is_supported())
   ))
@@ -84,6 +89,18 @@ local subcommands = {
   ["refs-off"] = function()
     require("latex-preview").set_references(false)
     vim.notify("latex-preview: referenced equations disabled")
+  end,
+  thms = function()
+    local state = require("latex-preview").toggle_theorem_references()
+    vim.notify("latex-preview: theorem references " .. (state and "enabled" or "disabled"))
+  end,
+  ["thms-on"] = function()
+    require("latex-preview").set_theorem_references(true)
+    vim.notify("latex-preview: theorem references enabled")
+  end,
+  ["thms-off"] = function()
+    require("latex-preview").set_theorem_references(false)
+    vim.notify("latex-preview: theorem references disabled")
   end,
   cites = function()
     local state = require("latex-preview").toggle_citations()

@@ -24,7 +24,8 @@ local targets = require("latex-preview.targets")
 
 ---@class LatexPreview.HoverState
 ---@field win snacks.win
----@field img snacks.image.Placement
+---@field img snacks.image.Placement?
+---@field imgs snacks.image.Placement[]?
 ---@field buf integer  -- the source buffer (where the cursor was)
 ---@field source_win integer
 ---@field eq LatexPreview.Equation  -- the equation that triggered the popup,
@@ -33,6 +34,7 @@ local targets = require("latex-preview.targets")
 ---@field signature string
 ---@field live_svg string?
 ---@field live_png string?
+---@field live_files string[]?
 local current = nil ---@type LatexPreview.HoverState?
 local next_render_id = 0
 local active_render_id = 0
@@ -57,10 +59,16 @@ end
 local function close_current()
   if not current then return end
   stop_refresh_timer()
-  pcall(function() current.win:close() end)
   if current.img then pcall(function() current.img:close() end) end
+  for _, img in ipairs(current.imgs or {}) do
+    pcall(function() img:close() end)
+  end
+  pcall(function() current.win:close() end)
   if current.live_svg then pcall(os.remove, current.live_svg) end
   if current.live_png then pcall(os.remove, current.live_png) end
+  for _, path in ipairs(current.live_files or {}) do
+    pcall(os.remove, path)
+  end
   for buf, maps in pairs(source_keymaps) do
     if vim.api.nvim_buf_is_valid(buf) then
       for _, lhs in ipairs(CLOSE_KEYS) do
@@ -161,6 +169,15 @@ local function target_under_cursor(buf)
   if config.options.references and config.options.references.enabled then
     local ref = targets.reference_under_cursor(buf)
     if ref then return ref end
+  end
+  if config.options.theorem_references and config.options.theorem_references.enabled then
+    local theorem_ref = targets.theorem_reference_under_cursor(buf)
+    if theorem_ref then return theorem_ref end
+  end
+  if (config.options.references and config.options.references.enabled)
+      or (config.options.theorem_references and config.options.theorem_references.enabled) then
+    local missing_ref = targets.missing_reference_under_cursor(buf)
+    if missing_ref then return missing_ref end
   end
   if config.options.citations and config.options.citations.enabled then
     local cite = targets.citation_under_cursor(buf)
@@ -429,6 +446,8 @@ local function make_text_window(lines)
         zindex = 50,
       })
       vim.wo[self.win].wrap = false
+      vim.wo[self.win].conceallevel = 2
+      vim.wo[self.win].concealcursor = "nvic"
     end,
     close = function(self)
       if self.win and vim.api.nvim_win_is_valid(self.win) then
@@ -441,14 +460,184 @@ local function make_text_window(lines)
   }
 end
 
-local function show_text_target(buf, source_win, target)
+local function show_image_file(buf, source_win, png_path, opts)
+  opts = opts or {}
+  local snacks = require("snacks")
+  if config.options.snacks
+      and config.options.snacks.disable_document_images
+      and snacks.image
+      and snacks.image.config then
+    snacks.image.config.doc = snacks.image.config.doc or {}
+    snacks.image.config.doc.enabled = false
+    snacks.image.config.doc.inline = false
+  end
+
+  if current and current.img and current.img.img and current.img.img.src == png_path then
+    current.eq = opts.eq
+    current.source_win = source_win
+    show_under_cursor(current.win, source_win)
+    pcall(function() current.img:update() end)
+    return true
+  end
+  close_current()
+
+  local win = snacks.win(snacks.win.resolve(snacks.image.config.doc, "snacks_image", {
+    show = false,
+    enter = false,
+    relative = "editor",
+    row = 0,
+    col = 0,
+    wo = { winblend = snacks.image.terminal.env().placeholders and 0 or nil },
+  }))
+  win:open_buf()
+  map_close_keys(win, buf)
+
+  local updated = false
+  local popup = config.options.popup or {}
+  local max_width = popup.max_width or math.max(1, vim.o.columns - 4)
+  local max_height = popup.max_height or math.max(1, vim.o.lines - 4)
+  local placement_opts = snacks.config.merge({}, snacks.image.config.doc, {
+    inline = false,
+    max_width = max_width,
+    max_height = max_height,
+    cache = config.get_cache_dir(buf),
+    on_update_pre = function(placement)
+      placement.img.info = nil
+      if not updated then
+        local loc = placement:state().loc
+        win.opts.width = loc.width
+        win.opts.height = loc.height
+        updated = show_under_cursor(win, source_win)
+      end
+    end,
+  })
+
+  current = {
+    type = opts.type or "image",
+    win = win,
+    buf = buf,
+    source_win = source_win,
+    eq = opts.eq,
+    render_id = opts.render_id,
+    signature = opts.signature,
+    live_svg = opts.live_svg,
+    live_png = opts.live_png,
+    img = snacks.image.placement.new(win.buf, png_path, placement_opts),
+  }
+  register_autocmds(buf)
+  return true
+end
+
+local show_text_target
+
+local function adjust_mixed_window(win, base_lines, loc)
+  if not win then return end
+  local popup = config.options.popup or {}
+  local max_width = popup.max_width or math.max(1, vim.o.columns - 4)
+  local max_height = popup.max_height or math.max(1, vim.o.lines - 4)
+  if loc then
+    win.opts.width = math.min(max_width, math.max(win.opts.width or 1, loc[2] + loc.width + 1))
+    win.opts.height = math.min(max_height, math.max(win.opts.height or 1, loc[1] + loc.height - 1))
+  else
+    win.opts.height = math.min(max_height, math.max(win.opts.height or 1, base_lines))
+  end
+  if win.win and vim.api.nvim_win_is_valid(win.win) then
+    pcall(function() win:update() end)
+  end
+end
+
+local function render_math_in_text_window(source_buf, source_win, target, win, render_id)
+  local eqs = parse.find_equations(win.buf)
+  if #eqs == 0 then return end
+  local snacks = require("snacks")
+  local preamble = extract.get_preamble(source_buf)
+  local popup = config.options.popup or {}
+  local max_width = popup.max_width or math.max(1, vim.o.columns - 4)
+  local max_height = popup.max_height or math.max(1, vim.o.lines - 4)
+  for i, eq in ipairs(eqs) do
+    render.render({
+      preamble = preamble,
+      equation = eq.text,
+      display = eq.display,
+      buf = source_buf,
+      live = true,
+      live_id = render_id * 1000 + i,
+      font_size = not eq.display and math.max(config.options.render.font_size or 11, 12) or nil,
+      pad_to_cells = eq.display and nil or false,
+    }, function(err, png_path)
+      if err or not png_path then return end
+      if active_render_id ~= render_id then return end
+      if not current or current.render_id ~= render_id or current.win ~= win then return end
+      if not vim.api.nvim_buf_is_valid(win.buf) then return end
+      if not vim.api.nvim_buf_is_valid(source_buf) or not vim.api.nvim_win_is_valid(source_win) then return end
+      local live_target = target_under_cursor(source_buf)
+      if not live_target or live_target.signature ~= target.signature then return end
+
+      local placement_opts = snacks.config.merge({}, snacks.image.config.doc, {
+        inline = true,
+        pos = { eq.start_row + 1, eq.start_col },
+        range = { eq.start_row + 1, eq.start_col, eq.end_row + 1, eq.end_col },
+        conceal = "",
+        type = "math",
+        max_width = max_width,
+        max_height = max_height,
+        cache = config.get_cache_dir(source_buf),
+        on_update_pre = function(placement)
+          placement.img.info = nil
+          local loc = placement:state().loc
+          adjust_mixed_window(win, #(target.lines or {}), loc)
+        end,
+      })
+      local img = snacks.image.placement.new(win.buf, png_path, placement_opts)
+      current.imgs = current.imgs or {}
+      current.imgs[#current.imgs + 1] = img
+      current.live_files = current.live_files or {}
+      current.live_files[#current.live_files + 1] = png_path
+      current.live_files[#current.live_files + 1] = png_path:gsub("%.png$", ".svg")
+      adjust_mixed_window(win, #(target.lines or {}))
+    end)
+  end
+end
+
+local function show_mixed_text_target(buf, source_win, target)
+  local signature = target.signature or table.concat(target.lines or {}, "\n")
+  if current and current.type == "mixed_text" and current.signature == signature then
+    show_under_cursor(current.win, source_win)
+    for _, img in ipairs(current.imgs or {}) do
+      pcall(function() img:update() end)
+    end
+    return true
+  end
+  close_current()
   active_render_id = active_render_id + 1
+  local render_id = active_render_id
+  local win = make_text_window(target.lines or {})
+  current = {
+    type = "mixed_text",
+    win = win,
+    imgs = {},
+    img = nil,
+    buf = buf,
+    source_win = source_win,
+    eq = nil,
+    render_id = render_id,
+    signature = signature,
+  }
+  show_under_cursor(win, source_win)
+  map_close_keys(win, buf)
+  register_autocmds(buf)
+  render_math_in_text_window(buf, source_win, target, win, render_id)
+  return true
+end
+
+function show_text_target(buf, source_win, target)
   local signature = target.signature or table.concat(target.lines or {}, "\n")
   if current and current.type == "text" and current.signature == signature then
     show_under_cursor(current.win, source_win)
     return true
   end
   close_current()
+  active_render_id = active_render_id + 1
   local win = make_text_window(target.lines or {})
   current = {
     type = "text",
@@ -486,6 +675,9 @@ function M.open()
   if target.type == "text" then
     return show_text_target(buf, source_win, target)
   end
+  if target.type == "mixed_text" then
+    return show_mixed_text_target(buf, source_win, target)
+  end
   local eq = target.equation
 
   local snacks = require("snacks")
@@ -508,7 +700,7 @@ function M.open()
     live = true,
   }
   local signature = render_signature(preamble, eq)
-  if current and current.signature == signature then
+  if current and current.img and current.signature == signature then
     current.eq = eq
     show_under_cursor(current.win, source_win)
     pcall(function() current.img:update() end)

@@ -2,6 +2,7 @@
 --
 -- Hover targets beyond "the equation under the cursor":
 --   * \ref/\eqref-style commands resolve to the labeled equation.
+--   * \ref/\cref-style commands resolve to labeled theorem-like blocks.
 --   * \cite-style commands resolve to BibTeX entries from local .bib files.
 
 local M = {}
@@ -18,6 +19,18 @@ local REF_COMMANDS = {
   Cref = true,
   vref = true,
   Vref = true,
+}
+
+local THEOREM_ENVS = {
+  theorem = true,
+  thm = true,
+  lemma = true,
+  lem = true,
+  proposition = true,
+  prop = true,
+  definition = true,
+  defn = true,
+  defi = true,
 }
 
 local function strip_star(cmd)
@@ -131,10 +144,15 @@ local function equation_source(buf, eq)
   return table.concat(lines, "\n")
 end
 
-function M.reference_under_cursor(buf)
+local function reference_label_under_cursor(buf)
   local cmd = command_under_cursor(buf, function(name) return REF_COMMANDS[name] == true end)
   if not cmd then return nil end
   local label = split_csv(cmd.arg)[1]
+  return label
+end
+
+function M.reference_under_cursor(buf)
+  local label = reference_label_under_cursor(buf)
   if not label then return nil end
   local label_pat = "\\label%s*{%s*" .. vim.pesc(label) .. "%s*}"
   for _, eq in ipairs(parse.find_equations(buf)) do
@@ -149,6 +167,101 @@ function M.reference_under_cursor(buf)
       }
     end
   end
+  return nil
+end
+
+local function theorem_env_at_line(line)
+  return line:match("\\begin%s*{%s*([%a*]+)%s*}")
+end
+
+local function theorem_envs_from_preamble(lines)
+  local envs = vim.deepcopy(THEOREM_ENVS)
+  for _, line in ipairs(lines) do
+    if line:find("\\begin{document}", 1, true) then break end
+    local env, title = line:match("\\newtheorem%s*%*?%s*{%s*([%a*]+)%s*}%s*%b[]%s*{%s*([^}]*)%s*}")
+    if not env then
+      env, title = line:match("\\newtheorem%s*%*?%s*{%s*([%a*]+)%s*}%s*{%s*([^}]*)%s*}")
+    end
+    if env and title then
+      local lower = title:lower()
+      if lower:match("theorem") or lower:match("lemma")
+          or lower:match("proposition") or lower:match("definition") then
+        envs[env:gsub("%*$", "")] = true
+      end
+    end
+    local declared = line:match("\\declaretheorem.-{%s*([%a*]+)%s*}")
+    if declared then envs[declared:gsub("%*$", "")] = true end
+  end
+  return envs
+end
+
+local function theorem_end_pattern(env)
+  return "\\end%s*{%s*" .. vim.pesc(env) .. "%s*}"
+end
+
+local function strip_outer_theorem_lines(lines, env)
+  if #lines == 0 then return lines end
+  lines = vim.deepcopy(lines)
+  lines[1] = lines[1]:gsub("^%s*\\begin%s*{%s*" .. vim.pesc(env) .. "%s*}%s*%b[]%s*", "")
+  lines[1] = lines[1]:gsub("^%s*\\begin%s*{%s*" .. vim.pesc(env) .. "%s*}%s*", "")
+  lines[#lines] = lines[#lines]:gsub("%s*" .. theorem_end_pattern(env) .. "%s*$", "")
+  while #lines > 0 and vim.trim(lines[1]) == "" do table.remove(lines, 1) end
+  while #lines > 0 and vim.trim(lines[#lines]) == "" do table.remove(lines) end
+  return lines
+end
+
+function M.theorem_reference_under_cursor(buf)
+  local label = reference_label_under_cursor(buf)
+  if not label then return nil end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local label_pat = "\\label%s*{%s*" .. vim.pesc(label) .. "%s*}"
+  local theorem_envs = theorem_envs_from_preamble(lines)
+  local stack = {}
+  for i, line in ipairs(lines) do
+    local env = theorem_env_at_line(line)
+    if env and theorem_envs[env:gsub("%*$", "")] then
+      stack[#stack + 1] = { env = env, start_row = i }
+    end
+    if line:find(label_pat) then
+      local block = stack[#stack]
+      if block then
+        local finish = #lines
+        local end_pat = theorem_end_pattern(block.env)
+        for j = i, #lines do
+          if lines[j]:find(end_pat) then
+            finish = j
+            break
+          end
+        end
+        local body = {}
+        for j = block.start_row, finish do
+          body[#body + 1] = lines[j]
+        end
+        body = strip_outer_theorem_lines(body, block.env)
+        for j, body_line in ipairs(body) do
+          body[j] = body_line:gsub("\\label%s*{[^{}]*}", "")
+        end
+        if #body == 0 then body = { vim.trim(block.env:gsub("^%l", string.upper)) .. ": " .. label } end
+        return {
+          type = "mixed_text",
+          source = "theorem_reference",
+          label = label,
+          signature = "theorem-ref:" .. label .. ":" .. vim.fn.sha256(table.concat(body, "\n")),
+          lines = body,
+        }
+      end
+    end
+    local end_env = line:match("\\end%s*{%s*([%a*]+)%s*}")
+    if end_env and #stack > 0 and stack[#stack].env == end_env then
+      stack[#stack] = nil
+    end
+  end
+  return nil
+end
+
+function M.missing_reference_under_cursor(buf)
+  local label = reference_label_under_cursor(buf)
+  if not label then return nil end
   return {
     type = "text",
     source = "reference",

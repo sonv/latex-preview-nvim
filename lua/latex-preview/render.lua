@@ -58,13 +58,19 @@ local function ensure_temp_cleanup()
 end
 
 local function effective_font_size(req)
+  if req.font_size then return req.font_size end
   if req.display then
     return config.options.render.display_font_size or config.options.render.font_size or 10
   end
   return config.options.render.font_size or 11
 end
 
----@param req { preamble: string, equation: string, display: boolean }
+local function should_pad_to_cells(req)
+  if req.pad_to_cells ~= nil then return req.pad_to_cells == true end
+  return config.options.render.pad_to_cells == true
+end
+
+---@param req { preamble: string, equation: string, display: boolean, pad_to_cells: boolean? }
 ---@return string  cache key suitable for use as a filename stem
 local function cache_key(req)
   local renderer_version = "raster-v8"
@@ -81,7 +87,7 @@ local function cache_key(req)
     fg,
     tostring(font_size),
     tostring(config.options.render.display_math_style),
-    tostring(config.options.render.pad_to_cells),
+    tostring(should_pad_to_cells(req)),
     tostring(density),
     renderer_version,
   }, "\n--latex-preview--\n")
@@ -254,7 +260,7 @@ end
 ---with the cached path on the next tick. Otherwise dispatches to the
 ---daemon → rasterizer pipeline.
 ---
----@param req { preamble: string, equation: string, display: boolean, buf: integer?, live: boolean?, live_id: integer? }
+---@param req { preamble: string, equation: string, display: boolean, buf: integer?, live: boolean?, live_id: integer?, font_size: integer?, pad_to_cells: boolean? }
 ---@param cb fun(err: string?, png_path: string?)
 function M.render(req, cb)
   -- buf is optional for backward compatibility and for tests that don't
@@ -303,6 +309,7 @@ function M.render(req, cb)
     -- Rasterize.
     svg_to_png(svg_path, png_path, function(rerr)
       if rerr then return cb(rerr, nil) end
+      if not should_pad_to_cells(req) then return cb(nil, png_path) end
       pad_to_cells(png_path, function(perr)
         if perr then return cb(perr, nil) end
         cb(nil, png_path)
@@ -325,7 +332,12 @@ function M.clear_cache(buf)
   while handle do
     local name = uv.fs_scandir_next(handle)
     if not name then break end
-    if name:match("%.svg$") or name:match("%.png$") then
+    if name:match("%.svg$")
+        or name:match("%.png$")
+        or name:match("%.tex$")
+        or name:match("%.pdf$")
+        or name:match("%.log$")
+        or name:match("%.aux$") then
       os.remove(dir .. "/" .. name)
       removed = removed + 1
     end

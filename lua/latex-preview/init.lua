@@ -5,6 +5,9 @@
 local M = {}
 
 local config = require("latex-preview.config")
+local uv = vim.uv or vim.loop
+local snacks_cache_watcher = nil
+local snacks_cache_timer = nil
 
 local function is_supported_filetype(ft)
   return vim.tbl_contains(config.options.filetypes or {}, ft)
@@ -24,6 +27,12 @@ local function snacks_doc_float_enabled()
   local _, image_config = snacks_image_config()
   local doc = image_config and image_config.doc or {}
   return doc.float == true
+end
+
+local function snacks_image_cache_dir()
+  local _, image_config = snacks_image_config()
+  return image_config and image_config.cache
+    or (vim.fn.stdpath("cache") .. "/snacks/image")
 end
 
 local function auto_hover_enabled()
@@ -133,6 +142,119 @@ local function disable_snacks_document_images()
   end
 end
 
+local function cleanup_snacks_image_cache()
+  local dir = snacks_image_cache_dir()
+  local handle = uv.fs_scandir(dir)
+  if not handle then return end
+  while true do
+    local name = uv.fs_scandir_next(handle)
+    if not name then break end
+    vim.fn.delete(dir .. "/" .. name, "rf")
+  end
+end
+
+local function count_snacks_image_cache_entries()
+  local dir = snacks_image_cache_dir()
+  local handle = uv.fs_scandir(dir)
+  if not handle then return 0 end
+  local count = 0
+  while true do
+    local name = uv.fs_scandir_next(handle)
+    if not name then break end
+    count = count + 1
+  end
+  return count
+end
+
+local function trim_snacks_image_cache(max_files)
+  local dir = snacks_image_cache_dir()
+  local handle = uv.fs_scandir(dir)
+  if not handle then return end
+  local entries = {}
+  while true do
+    local name = uv.fs_scandir_next(handle)
+    if not name then break end
+    local path = dir .. "/" .. name
+    local stat = uv.fs_stat(path)
+    if stat then
+      entries[#entries + 1] = {
+        path = path,
+        mtime = stat.mtime and stat.mtime.sec or 0,
+        nsec = stat.mtime and stat.mtime.nsec or 0,
+      }
+    end
+  end
+  if #entries <= max_files then return end
+  table.sort(entries, function(a, b)
+    if a.mtime ~= b.mtime then return a.mtime > b.mtime end
+    return a.nsec > b.nsec
+  end)
+  for i = max_files + 1, #entries do
+    vim.fn.delete(entries[i].path, "rf")
+  end
+end
+
+local function enforce_snacks_image_cache_limit()
+  local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
+  if max_files <= 0 then return end
+  if count_snacks_image_cache_entries() > max_files then
+    trim_snacks_image_cache(max_files)
+  end
+end
+
+local function schedule_snacks_image_cache_limit_check()
+  if not (config.options.snacks and config.options.snacks.max_cache_files) then return end
+  if not snacks_cache_timer then snacks_cache_timer = assert(uv.new_timer()) end
+  snacks_cache_timer:stop()
+  snacks_cache_timer:start(250, 0, function()
+    vim.schedule(enforce_snacks_image_cache_limit)
+  end)
+end
+
+local function install_snacks_info_cleanup()
+  if not (config.options.snacks and config.options.snacks.clean_info_on_exit) then return end
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("latex_preview_snacks_info_cleanup", { clear = true }),
+    callback = cleanup_snacks_image_cache,
+  })
+end
+
+local function install_snacks_cache_limit()
+  local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
+  if max_files <= 0 then return end
+  local dir = snacks_image_cache_dir()
+  vim.fn.mkdir(dir, "p")
+  enforce_snacks_image_cache_limit()
+  if snacks_cache_watcher then
+    snacks_cache_watcher:stop()
+    snacks_cache_watcher:close()
+    snacks_cache_watcher = nil
+  end
+  snacks_cache_watcher = assert(uv.new_fs_event())
+  local ok = snacks_cache_watcher:start(dir, {}, function()
+    schedule_snacks_image_cache_limit_check()
+  end)
+  if not ok then
+    snacks_cache_watcher:close()
+    snacks_cache_watcher = nil
+  end
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("latex_preview_snacks_cache_limit", { clear = true }),
+    callback = function()
+      if snacks_cache_timer then
+        snacks_cache_timer:stop()
+        snacks_cache_timer:close()
+        snacks_cache_timer = nil
+      end
+      if snacks_cache_watcher then
+        snacks_cache_watcher:stop()
+        snacks_cache_watcher:close()
+        snacks_cache_watcher = nil
+      end
+    end,
+  })
+end
+
 ---@param opts? LatexPreview.Config
 function M.setup(opts)
   config.setup(opts)
@@ -140,6 +262,8 @@ function M.setup(opts)
   if config.options.snacks and config.options.snacks.disable_document_images then
     disable_snacks_document_images()
   end
+  install_snacks_info_cleanup()
+  install_snacks_cache_limit()
 
   ensure_auto_hover_autocmd()
   if auto_hover_enabled() then attach_auto_hover_buffers() end
@@ -157,6 +281,13 @@ function M.setup(opts)
     config.options.citations,
     function() return M.citations_enabled() end,
     function(state) M.set_citations(state) end
+  )
+  install_feature_toggle(
+    "latex_preview_theorem_references",
+    "LaTeX Preview Theorem References",
+    config.options.theorem_references,
+    function() return M.theorem_references_enabled() end,
+    function(state) M.set_theorem_references(state) end
   )
 
   -- Optional: install a default keymap on entering a supported filetype.
@@ -244,6 +375,28 @@ end
 function M.toggle_references()
   local state = not M.references_enabled()
   M.set_references(state)
+  return state
+end
+
+---Whether theorem-like reference hover previews are currently enabled.
+---@return boolean
+function M.theorem_references_enabled()
+  return config.options.theorem_references and config.options.theorem_references.enabled == true
+end
+
+---Enable or disable theorem-like reference hover previews at runtime.
+---@param state boolean
+function M.set_theorem_references(state)
+  config.options.theorem_references = config.options.theorem_references or {}
+  config.options.theorem_references.enabled = state == true
+  if not state then require("latex-preview.hover").close() end
+end
+
+---Toggle theorem-like reference hover previews at runtime.
+---@return boolean
+function M.toggle_theorem_references()
+  local state = not M.theorem_references_enabled()
+  M.set_theorem_references(state)
   return state
 end
 

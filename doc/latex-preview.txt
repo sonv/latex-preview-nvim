@@ -78,6 +78,9 @@ Example: >lua
         refs      Toggle referenced-equation previews on/off.
         refs-on   Enable referenced-equation previews.
         refs-off  Disable referenced-equation previews.
+        thms      Toggle theorem-like reference previews on/off.
+        thms-on   Enable theorem-like reference previews.
+        thms-off  Disable theorem-like reference previews.
         cites     Toggle citation previews on/off.
         cites-on  Enable citation previews.
         cites-off Disable citation previews.
@@ -95,12 +98,17 @@ The hover target is chosen in this order:
   2. A reference command such as \ref{...}, \eqref{...}, \cref{...}, or
      \autoref{...} previews the labeled equation when
      references.enabled=true.
-  3. A citation command such as \cite{...} or \parencite{...} previews the
+  3. The same reference commands preview labeled theorem, lemma, proposition,
+     and definition environments when theorem_references.enabled=true.
+  4. A citation command such as \cite{...} or \parencite{...} previews the
      matching BibTeX entry when citations.enabled=true.
 
 Referenced equations are resolved from \label{...} commands inside equation
-environments in the current buffer. Citations are resolved from local .bib
-files listed with \bibliography{...} or \addbibresource{...}.
+environments in the current buffer. Theorem-like references are resolved from
+\label{...} commands inside theorem, lemma, proposition, and definition
+environments, shown as source text, and any inline or display math inside the
+block is rendered in place with MathJax. Citations are resolved from local
+.bib files listed with \bibliography{...} or \addbibresource{...}.
 
 Display equations use LaTeX display style by default. Physical line breaks
 in your source are treated as spaces, so wrapped source does not force a
@@ -128,11 +136,12 @@ through is exact.
 If you'd rather have the plugin install this mapping for you, set
 `setup_keymap = true` in setup().
 
-Reference and citation toggles can also be mapped automatically: >lua
+Reference, theorem, and citation toggles can also be mapped automatically: >lua
 
     require("latex-preview").setup({
       setup_keymap = true,
       references = { toggle_keymap = "<leader>ir" },
+      theorem_references = { toggle_keymap = "<leader>it" },
       citations = { toggle_keymap = "<leader>ic" },
     })
 <
@@ -189,6 +198,11 @@ Default config: >lua
         toggle_keymap = "<leader>ir",
       },
 
+      theorem_references = {
+        enabled = true,
+        toggle_keymap = "<leader>it",
+      },
+
       citations = {
         enabled = true,
         toggle_keymap = "<leader>ic",
@@ -196,6 +210,8 @@ Default config: >lua
 
       snacks = {
         disable_document_images = true,
+        clean_info_on_exit = true,
+        max_cache_files = 100,
       },
     }
 <
@@ -256,6 +272,21 @@ references.toggle_keymap ~
         Optional key for the runtime referenced-equation toggle when
         setup_keymap=true. Defaults to <leader>ir.
 
+                                        *latex-preview-config-theorem-references*
+theorem_references.enabled ~
+        If true, hovering over a supported reference command previews a
+        labeled theorem, lemma, proposition, or definition environment when
+        no labeled equation matches first. The block is shown as source text,
+        while inline and display math source inside it is concealed and
+        replaced with MathJax-rendered images using the same extracted macro
+        preamble as equation previews.
+        Common aliases such as thm, lem, prop, and defn are detected from
+        \newtheorem declarations.
+
+theorem_references.toggle_keymap ~
+        Optional key for the runtime theorem-like reference toggle when
+        setup_keymap=true. Defaults to <leader>it.
+
                                                  *latex-preview-config-citations*
 citations.enabled ~
         If true, hovering over citation-style commands whose names contain
@@ -266,15 +297,29 @@ citations.toggle_keymap ~
         Optional key for the runtime citation toggle when setup_keymap=true.
         Defaults to <leader>ic.
 
+                                                     *latex-preview-config-snacks*
+snacks.clean_info_on_exit ~
+        If true, empty the Snacks image cache directory on VimLeavePre.
+        Defaults to true. The option name is kept for compatibility with
+        earlier latex-preview.nvim configs.
+
+snacks.max_cache_files ~
+        Maximum number of entries allowed in the Snacks image cache
+        directory. When the directory exceeds this many entries,
+        latex-preview.nvim removes the oldest entries and keeps the most
+        recent ones. Set to 0 or a negative value to disable the limit.
+        Defaults to 100.
+
 ==============================================================================
 7. HOW IT WORKS                                       *latex-preview-internals*
 
 When you trigger hover:
 
 1. The plugin resolves the hover target. It first checks for a math
-   expression under the cursor, then a supported reference command, then a
-   supported citation command. If none match, it returns false (so the
-   keymap can fall through to LSP).
+   expression under the cursor, then a supported reference command pointing
+   to an equation or theorem-like environment, then a supported citation
+   command. If none match, it returns false (so the keymap can fall through
+   to LSP).
 
 2. For equation previews, it extracts every macro definition from the buffer
    plus any matching
@@ -295,9 +340,11 @@ When you trigger hover:
    triggers either a re-call (if the cursor moved to a new equation) or
    a close.
 
-Reference previews reuse the same equation rendering pipeline after resolving
-the target \label in the current buffer. Citation previews open a text popup
-containing the matching BibTeX entry.
+Equation reference previews reuse the same rendering pipeline after resolving
+the target \label in the current buffer. Theorem-like references open a text
+popup for the matching source block and render math fragments inside that
+popup. Citation previews open a text popup containing the matching BibTeX
+entry.
 
 ==============================================================================
 8. LIMITATIONS                                     *latex-preview-limitations*
@@ -309,9 +356,8 @@ MathJax is a TeX subset; the popup will fail to render:
   \RequirePackage, and \input directives are scanned
 - Anything requiring runtime TeX execution: \ifthenelse, counters, etc.
 - Custom packages that do more than define macros (options, hooks, etc.)
-- Reference and citation previews are static editor lookups. They do not run
-  LaTeX, BibTeX, or Biber, so generated labels and advanced bibliography
-  inheritance are not expanded.
+- Reference, theorem, and citation target discovery is static. Generated
+  labels and BibTeX/Biber output are not expanded.
 
 The plugin requires a Kitty-graphics-capable terminal (kitty, wezterm,
 or ghostty). On other terminals, the popup will appear with placeholder

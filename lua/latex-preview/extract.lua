@@ -39,6 +39,7 @@ local DEF_PATTERNS = {
   "\\ProvideDocumentCommand%s*[{\\]",
   "\\newenvironment%s*[%*]?%s*{",
   "\\renewenvironment%s*[%*]?%s*{",
+  "\\newtheorem%s*[%*]?%s*{",
   "\\def%s*\\",
   "\\gdef%s*\\",
   "\\edef%s*\\",

@@ -143,6 +143,9 @@ git clone https://github.com/your-username/latex-preview.nvim \
 | `:LatexPreview refs` | Toggle previews for referenced equations under `\ref` / `\eqref` |
 | `:LatexPreview refs-on` | Enable referenced-equation previews |
 | `:LatexPreview refs-off` | Disable referenced-equation previews |
+| `:LatexPreview thms` | Toggle previews for referenced theorem-like environments |
+| `:LatexPreview thms-on` | Enable theorem-like reference previews |
+| `:LatexPreview thms-off` | Disable theorem-like reference previews |
 | `:LatexPreview cites` | Toggle citation previews under `\cite...` commands |
 | `:LatexPreview cites-on` | Enable citation previews |
 | `:LatexPreview cites-off` | Disable citation previews |
@@ -167,13 +170,19 @@ The hover target is chosen in this order:
 2. A reference command such as `\ref{...}`, `\eqref{...}`, `\cref{...}`,
    or `\autoref{...}` previews the labeled equation when
    `references.enabled = true`.
-3. A citation command such as `\cite{...}` or `\parencite{...}` previews
+3. The same reference commands preview labeled theorem, lemma,
+   proposition, and definition environments when
+   `theorem_references.enabled = true`.
+4. A citation command such as `\cite{...}` or `\parencite{...}` previews
    the matching BibTeX entry when `citations.enabled = true`.
 
 Referenced equations are resolved from `\label{...}` commands inside
-equation environments in the current buffer. Citations are resolved from
-local `.bib` files listed with `\bibliography{...}` or
-`\addbibresource{...}`.
+equation environments in the current buffer. Theorem-like references are
+resolved from `\label{...}` commands inside `theorem`, `lemma`,
+`proposition`, and `definition` environments, shown as source text, and any
+inline or display math inside the block is rendered in place with MathJax.
+Citations are resolved from local `.bib` files listed with
+`\bibliography{...}` or `\addbibresource{...}`.
 
 Display equations use LaTeX display style by default. Physical line
 breaks in your source are treated as spaces, so wrapped source does not
@@ -207,12 +216,13 @@ vim.keymap.set("n", "<leader>m", function()
 end)
 ```
 
-The reference/citation toggles can also be mapped automatically:
+The reference/theorem/citation toggles can also be mapped automatically:
 
 ```lua
 require("latex-preview").setup({
   setup_keymap = true,
   references = { toggle_keymap = "<leader>ir" },
+  theorem_references = { toggle_keymap = "<leader>it" },
   citations = { toggle_keymap = "<leader>ic" },
 })
 ```
@@ -281,6 +291,11 @@ require("latex-preview").setup({
     toggle_keymap = "<leader>ir", -- runtime toggle when setup_keymap=true
   },
 
+  theorem_references = {
+    enabled = true,         -- preview labeled theorem/lemma/proposition/definition blocks
+    toggle_keymap = "<leader>it", -- runtime toggle when setup_keymap=true
+  },
+
   citations = {
     enabled = true,         -- preview BibTeX entries referenced by \cite... commands
     toggle_keymap = "<leader>ic", -- runtime toggle when setup_keymap=true
@@ -290,6 +305,11 @@ require("latex-preview").setup({
     -- Keep snacks.image available for the explicit popup, but disable
     -- Snacks' own document renderer that auto-renders every equation inline.
     disable_document_images = true,
+    -- Empty Snacks' image cache on exit. The option name is kept for compatibility.
+    clean_info_on_exit = true,
+    -- Keep at most this many Snacks image cache entries, trimming oldest first.
+    -- Set <=0 to disable.
+    max_cache_files = 100,
   },
 
   -- Note: popup sizing, border, padding, and similar visual options still
@@ -325,14 +345,21 @@ Reference previews support common one-argument reference commands:
 `\ref`, `\eqref`, `\autoref`, `\cref`, `\Cref`, `\vref`, and `\Vref`.
 The preview shows the equation that contains the matching `\label`.
 
+Theorem-like reference previews use the same commands and show the labeled
+`theorem`, `lemma`, `proposition`, or `definition` block as source text.
+Inline and display math source inside that text is concealed and replaced
+with MathJax-rendered images, using the same extracted macro preamble as
+equation previews. Common aliases such as `thm`, `lem`, `prop`, and `defn`
+are detected from `\newtheorem` declarations.
+
 Citation previews support citation-style commands whose command name
 contains `cite`, including common BibTeX and biblatex forms such as
 `\cite`, `\citet`, `\citep`, `\parencite`, and `\textcite`. For multiple
 keys, the key under the cursor is used when possible; otherwise the
 first key is shown.
 
-Both features are enabled by default and can be toggled at runtime with
-`:LatexPreview refs` and `:LatexPreview cites`.
+These features are enabled by default and can be toggled at runtime with
+`:LatexPreview refs`, `:LatexPreview thms`, and `:LatexPreview cites`.
 
 ## What renders
 
@@ -350,10 +377,9 @@ Doesn't render: TikZ in math, runtime-evaluated macros (`\ifthenelse`,
 counters, lengths), and exotic packages that do more than define macros.
 For those, your `pdflatex` compile remains the source of truth.
 
-Reference and citation previews are static editor lookups. They do not run
-LaTeX, BibTeX, or Biber, so generated labels, imported bibliography data not
-listed in the current buffer, and advanced bibliography inheritance are not
-expanded.
+Reference, theorem, and citation target discovery is a static editor lookup.
+Generated labels, imported bibliography data not listed in the current buffer,
+and advanced bibliography inheritance are not expanded.
 
 ## Performance (done by Claude)
 

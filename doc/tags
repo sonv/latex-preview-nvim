@@ -8,6 +8,8 @@ latex-preview-config-hover	latex-preview.txt	/*latex-preview-config-hover*
 latex-preview-config-references	latex-preview.txt	/*latex-preview-config-references*
 latex-preview-config-scan-sty	latex-preview.txt	/*latex-preview-config-scan-sty*
 latex-preview-config-setup-keymap	latex-preview.txt	/*latex-preview-config-setup-keymap*
+latex-preview-config-snacks	latex-preview.txt	/*latex-preview-config-snacks*
+latex-preview-config-theorem-references	latex-preview.txt	/*latex-preview-config-theorem-references*
 latex-preview-contents	latex-preview.txt	/*latex-preview-contents*
 latex-preview-internals	latex-preview.txt	/*latex-preview-internals*
 latex-preview-intro	latex-preview.txt	/*latex-preview-intro*
