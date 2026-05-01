@@ -21,6 +21,7 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local config = require("latex-preview.config")
+local util = require("latex-preview.util")
 
 -- Patterns that mark a line as carrying a macro/environment definition.
 local DEF_PATTERNS = {
@@ -58,7 +59,7 @@ local function strip_comment(line)
   while true do
     local p = line:find("%", i, true)
     if not p then return line end
-    if p == 1 or line:sub(p - 1, p - 1) ~= "\\" then
+    if not util.is_escaped(line, p) then
       return line:sub(1, p - 1)
     end
     i = p + 1
@@ -242,7 +243,7 @@ function M.scan_sty_files(buf)
   end
   if #queue == 0 then return "" end
 
-  local seen_name, seen_file, found = {}, {}, {}
+  local seen_name, seen_file, found, file_lines = {}, {}, {}, {}
   local depth_cap = config.options.extract.sty_search_depth
   local qi = 1
   while qi <= #queue do
@@ -256,6 +257,7 @@ function M.scan_sty_files(buf)
         found[#found + 1] = path
         local lines = read_lines(path)
         if lines then
+          file_lines[path] = lines
           for _, line in ipairs(lines) do
             line = strip_comment(line)
             vim.list_extend(queue, package_names_from_line(line))
@@ -269,7 +271,7 @@ function M.scan_sty_files(buf)
 
   local parts = {}
   for _, sty in ipairs(found) do
-    local lines = read_lines(sty)
+    local lines = file_lines[sty] or read_lines(sty)
     if lines then
       local defs = M.extract_definitions(lines)
       if defs ~= "" then
@@ -335,11 +337,24 @@ end
 ---\newcommand. .sty files aren't tracked for changes — the cache lives
 ---only as long as the buffer hasn't changed, so re-scanning is cheap
 ---when it does happen.
-local cache = setmetatable({}, { __mode = "k" }) -- weak by buf
+local cache = {}
+local cache_cleanup_registered = false
+
+local function ensure_cache_cleanup()
+  if cache_cleanup_registered then return end
+  cache_cleanup_registered = true
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = vim.api.nvim_create_augroup("latex_preview_extract_cache", { clear = true }),
+    callback = function(args)
+      cache[args.buf] = nil
+    end,
+  })
+end
 
 ---@param buf integer
 ---@return string preamble  Concatenated definitions, MathJax-normalized.
 function M.get_preamble(buf)
+  ensure_cache_cleanup()
   local tick = vim.api.nvim_buf_get_changedtick(buf)
   local entry = cache[buf]
   if entry and entry.tick == tick then return entry.value end

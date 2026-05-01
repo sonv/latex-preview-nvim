@@ -38,6 +38,30 @@ local TS_QUERIES = {
   ]],
 }
 
+local function escape_lua_pattern(s)
+  return (s:gsub("([^%w])", "%%%1"))
+end
+
+local function strip_math_delimiters(text)
+  local stripped = vim.trim(text)
+  stripped = stripped
+    :gsub("^%$%$", ""):gsub("%$%$$", "")
+    :gsub("^%$", ""):gsub("%$$", "")
+    :gsub("^\\%[", ""):gsub("\\%]$", "")
+    :gsub("^\\%(", ""):gsub("\\%)$", "")
+
+  local env = stripped:match("^\\begin%s*{([^}]+)}")
+  if env then
+    local pat = escape_lua_pattern(env)
+    local body = stripped
+      :gsub("^\\begin%s*{" .. pat .. "}", "", 1)
+      :gsub("\\end%s*{" .. pat .. "}%s*$", "", 1)
+    if body ~= stripped then stripped = body end
+  end
+
+  return vim.trim(stripped)
+end
+
 ---@param buf integer
 ---@param lang string
 ---@return LatexPreview.Equation[]?
@@ -60,19 +84,17 @@ local function ts_extract(buf, lang)
     local cap = query.captures[id]
     local sr, sc, er, ec = node:range()
     local text = vim.treesitter.get_node_text(node, buf) or ""
+    local trimmed_text = vim.trim(text)
     local display = cap == "display"
     if cap == "any" then
       -- markdown_inline produces a `latex_block` for both inline and display.
       -- Differentiate by leading delimiter.
-      display = text:match("^%$%$") or text:match("^\\%[") or text:match("^\\begin")
+      display = trimmed_text:match("^%$%$")
+        or trimmed_text:match("^\\%[")
+        or trimmed_text:match("^\\begin")
     end
     -- Strip the outer delimiters so we can pass clean math to MathJax.
-    local stripped = text
-      :gsub("^%$%$", ""):gsub("%$%$$", "")
-      :gsub("^%$", ""):gsub("%$$", "")
-      :gsub("^\\%[", ""):gsub("\\%]$", "")
-      :gsub("^\\%(", ""):gsub("\\%)$", "")
-    stripped = vim.trim(stripped)
+    local stripped = strip_math_delimiters(text)
     if stripped ~= "" then
       results[#results + 1] = {
         start_row = sr, start_col = sc,
@@ -186,8 +208,7 @@ local function regex_extract(buf)
   -- $, look for a matching unescaped $ on the same line, and confirm the
   -- range doesn't overlap with anything already consumed.
   local function unescaped_at(idx)
-    if idx == 1 then return source:sub(idx, idx) == "$" end
-    return source:sub(idx, idx) == "$" and source:sub(idx - 1, idx - 1) ~= "\\"
+    return source:sub(idx, idx) == "$" and not util.is_escaped(source, idx)
   end
 
   local i = 1
@@ -199,7 +220,7 @@ local function regex_extract(buf)
       while j <= #source do
         local c = source:sub(j, j)
         if c == "\n" then break end
-        if c == "$" and source:sub(j - 1, j - 1) ~= "\\" then
+        if c == "$" and not util.is_escaped(source, j) then
           closed = j
           break
         end
@@ -269,19 +290,43 @@ end
 
 -- Public API ----------------------------------------------------------------
 
+local cache = {}
+local cache_cleanup_registered = false
+
+local function ensure_cache_cleanup()
+  if cache_cleanup_registered then return end
+  cache_cleanup_registered = true
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = vim.api.nvim_create_augroup("latex_preview_parse_cache", { clear = true }),
+    callback = function(args)
+      cache[args.buf] = nil
+    end,
+  })
+end
+
 ---@param buf integer
 ---@return LatexPreview.Equation[]
 function M.find_equations(buf)
+  ensure_cache_cleanup()
   local ft = vim.bo[buf].filetype
-  -- Prefer treesitter for the fileytpes where we have a query.
+  local tick = vim.api.nvim_buf_get_changedtick(buf)
+  local entry = cache[buf]
+  if entry and entry.tick == tick and entry.ft == ft then
+    return entry.value
+  end
+
+  local result
+  -- Prefer treesitter for the filetypes where we have a query.
   if ft == "tex" or ft == "latex" or ft == "plaintex" then
     local r = ts_extract(buf, "latex")
-    if r then return r end
+    if r then result = r end
   elseif ft == "markdown" or ft == "rmd" or ft == "quarto" then
     local r = ts_extract(buf, "markdown_inline")
-    if r then return merge_non_overlapping(r, regex_extract(buf)) end
+    if r then result = merge_non_overlapping(r, regex_extract(buf)) end
   end
-  return regex_extract(buf)
+  result = result or regex_extract(buf)
+  cache[buf] = { tick = tick, ft = ft, value = result }
+  return result
 end
 
 return M

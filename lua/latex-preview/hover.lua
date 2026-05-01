@@ -20,6 +20,7 @@ local config = require("latex-preview.config")
 local parse = require("latex-preview.parse")
 local extract = require("latex-preview.extract")
 local render = require("latex-preview.render")
+local targets = require("latex-preview.targets")
 
 ---@class LatexPreview.HoverState
 ---@field win snacks.win
@@ -57,7 +58,7 @@ local function close_current()
   if not current then return end
   stop_refresh_timer()
   pcall(function() current.win:close() end)
-  pcall(function() current.img:close() end)
+  if current.img then pcall(function() current.img:close() end) end
   if current.live_svg then pcall(os.remove, current.live_svg) end
   if current.live_png then pcall(os.remove, current.live_png) end
   for buf, maps in pairs(source_keymaps) do
@@ -152,14 +153,32 @@ local function equation_under_cursor(buf)
   return nil
 end
 
+local function target_under_cursor(buf)
+  local eq = equation_under_cursor(buf)
+  if eq then
+    return { type = "equation", source = "direct", equation = eq }
+  end
+  if config.options.references and config.options.references.enabled then
+    local ref = targets.reference_under_cursor(buf)
+    if ref then return ref end
+  end
+  if config.options.citations and config.options.citations.enabled then
+    local cite = targets.citation_under_cursor(buf)
+    if cite then return cite end
+  end
+  return nil
+end
+
 local function render_signature(preamble, eq)
+  local font_size = eq.display
+    and (config.options.render.display_font_size or config.options.render.font_size)
+    or config.options.render.font_size
   return table.concat({
     preamble or "",
     eq.text or "",
     eq.display and "1" or "0",
     config.get_fg(),
-    tostring(config.options.render.font_size),
-    tostring(config.options.render.display_font_size),
+    tostring(font_size),
     tostring(config.options.render.display_math_style),
     tostring(config.options.render.pad_to_cells),
     tostring(config.options.render.density),
@@ -174,9 +193,17 @@ local function place_under_cursor(win, source_win)
   local cursor = vim.api.nvim_win_get_cursor(source_win)
   local ok, screenpos = pcall(vim.fn.screenpos, source_win, cursor[1], cursor[2] + 1)
   if not ok or not screenpos or screenpos.row == 0 then return false end
+  local height = tonumber(win.opts.height) or 1
+  local width = tonumber(win.opts.width) or 1
+  local max_row = math.max(0, vim.o.lines - height - 1)
+  local max_col = math.max(0, vim.o.columns - width - 1)
+  local row = screenpos.row
+  if row + height > vim.o.lines - 1 then
+    row = math.max(0, screenpos.row - height - 1)
+  end
   win.opts.relative = "editor"
-  win.opts.row = math.min(vim.o.lines - 2, screenpos.row)
-  win.opts.col = math.max(0, math.min(vim.o.columns - 2, screenpos.col - 1))
+  win.opts.row = math.max(0, math.min(max_row, row))
+  win.opts.col = math.max(0, math.min(max_col, screenpos.col - 1))
   if win.win and vim.api.nvim_win_is_valid(win.win) then
     pcall(function() win:update() end)
   end
@@ -237,7 +264,7 @@ local function register_autocmds(buf)
         autocmd_buf = nil
         return true
       end
-      if not equation_under_cursor(buf) then
+      if not target_under_cursor(buf) then
         close_current()
         return true
       end
@@ -357,6 +384,88 @@ function M.is_supported()
   return env and env.placeholders == true
 end
 
+local function make_text_window(lines)
+  local popup = config.options.popup or {}
+  local max_width = popup.max_width or math.max(1, vim.o.columns - 4)
+  local max_height = popup.max_height or math.max(1, vim.o.lines - 4)
+  local width = 1
+  for _, line in ipairs(lines) do
+    width = math.max(width, vim.fn.strdisplaywidth(line))
+  end
+  width = math.max(20, math.min(max_width, width + 2))
+  local height = math.max(1, math.min(max_height, #lines))
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  return {
+    buf = buf,
+    win = nil,
+    opts = { row = 0, col = 0, width = width, height = height },
+    update = function(self)
+      if self.win and vim.api.nvim_win_is_valid(self.win) then
+        vim.api.nvim_win_set_config(self.win, {
+          relative = "editor",
+          row = self.opts.row,
+          col = self.opts.col,
+          width = self.opts.width,
+          height = self.opts.height,
+          style = "minimal",
+          border = "rounded",
+        })
+      end
+    end,
+    show = function(self)
+      if self.win and vim.api.nvim_win_is_valid(self.win) then return end
+      self.win = vim.api.nvim_open_win(self.buf, false, {
+        relative = "editor",
+        row = self.opts.row,
+        col = self.opts.col,
+        width = self.opts.width,
+        height = self.opts.height,
+        style = "minimal",
+        border = "rounded",
+        zindex = 50,
+      })
+      vim.wo[self.win].wrap = false
+    end,
+    close = function(self)
+      if self.win and vim.api.nvim_win_is_valid(self.win) then
+        vim.api.nvim_win_close(self.win, true)
+      end
+      if vim.api.nvim_buf_is_valid(self.buf) then
+        vim.api.nvim_buf_delete(self.buf, { force = true })
+      end
+    end,
+  }
+end
+
+local function show_text_target(buf, source_win, target)
+  active_render_id = active_render_id + 1
+  local signature = target.signature or table.concat(target.lines or {}, "\n")
+  if current and current.type == "text" and current.signature == signature then
+    show_under_cursor(current.win, source_win)
+    return true
+  end
+  close_current()
+  local win = make_text_window(target.lines or {})
+  current = {
+    type = "text",
+    win = win,
+    img = nil,
+    buf = buf,
+    source_win = source_win,
+    eq = nil,
+    render_id = active_render_id,
+    signature = signature,
+  }
+  show_under_cursor(win, source_win)
+  map_close_keys(win, buf)
+  register_autocmds(buf)
+  return true
+end
+
 ---Show a hover preview for the math expression under the cursor.
 ---Returns true if a preview was triggered, false if no equation was found.
 ---@return boolean
@@ -366,14 +475,18 @@ function M.open()
   end
   local buf = vim.api.nvim_get_current_buf()
   local source_win = vim.api.nvim_get_current_win()
-  local eq = equation_under_cursor(buf)
-  if not eq then
+  local target = target_under_cursor(buf)
+  if not target then
     -- Closing here lets a caller bind hover() to a key like K and not
     -- have to remember to close on the way out — moving the cursor out
     -- of an equation auto-dismisses.
     close_current()
     return false
   end
+  if target.type == "text" then
+    return show_text_target(buf, source_win, target)
+  end
+  local eq = target.equation
 
   local snacks = require("snacks")
   if config.options.snacks
@@ -407,7 +520,6 @@ function M.open()
   req.live_id = render_id
   if current then
     current.render_id = render_id
-    current.eq = eq
     current.source_win = source_win
     show_under_cursor(current.win, source_win)
   end
@@ -417,8 +529,10 @@ function M.open()
     if current and current.render_id ~= render_id then return end
     if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(source_win) then return end
     if vim.api.nvim_get_current_buf() ~= buf or vim.api.nvim_get_current_win() ~= source_win then return end
-    local live_eq = equation_under_cursor(buf)
-    if not live_eq or render_signature(extract.get_preamble(buf), live_eq) ~= signature then return end
+    local live_target = target_under_cursor(buf)
+    if not live_target or live_target.type ~= "equation" then return end
+    local live_eq = live_target.equation
+    if render_signature(extract.get_preamble(buf), live_eq) ~= signature then return end
     if err or not png_path then
       vim.notify("[latex-preview] " .. (err or "render failed"), vim.log.levels.WARN)
       return
@@ -427,7 +541,7 @@ function M.open()
     -- If a hover for the same image is already showing, just refresh it.
     -- Otherwise close any previous and open a new one.
     if current and current.img and current.img.img and current.img.img.src == png_path then
-      current.eq = eq
+      current.eq = live_eq
       current.source_win = source_win
       show_under_cursor(current.win, source_win)
       pcall(function() current.img:update() end)
@@ -478,14 +592,15 @@ function M.open()
     })
 
     current = {
+      type = "equation",
       win = win,
       buf = buf,
       source_win = source_win,
-      eq = eq,
+      eq = live_eq,
       render_id = render_id,
       signature = signature,
-      live_svg = png_path:gsub("%.png$", ".svg"),
-      live_png = png_path,
+      live_svg = req.live and png_path:gsub("%.png$", ".svg") or nil,
+      live_png = req.live and png_path or nil,
       img = snacks.image.placement.new(win.buf, png_path, placement_opts),
     }
     register_autocmds(buf)

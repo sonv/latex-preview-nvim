@@ -14,6 +14,48 @@ local M = {}
 local uv = vim.uv or vim.loop
 local config = require("latex-preview.config")
 local daemon = require("latex-preview.daemon")
+local pad_warning_shown = false
+local temp_cleanup_registered = false
+
+local function temp_base_dir()
+  return vim.fn.stdpath("run") .. "/latex-preview"
+end
+
+local function temp_dir()
+  return temp_base_dir() .. "/" .. tostring(uv.os_getpid())
+end
+
+local function process_alive(pid)
+  local ok, ret = pcall(uv.kill, pid, 0)
+  return ok and (ret == 0 or ret == true)
+end
+
+local function cleanup_stale_temp_dirs()
+  local base = temp_base_dir()
+  if not uv.fs_stat(base) then return end
+  local handle = uv.fs_scandir(base)
+  local current_pid = uv.os_getpid()
+  while handle do
+    local name, typ = uv.fs_scandir_next(handle)
+    if not name then break end
+    local pid = tonumber(name)
+    if typ == "directory" and pid and pid ~= current_pid and not process_alive(pid) then
+      vim.fn.delete(base .. "/" .. name, "rf")
+    end
+  end
+end
+
+local function ensure_temp_cleanup()
+  if temp_cleanup_registered then return end
+  temp_cleanup_registered = true
+  cleanup_stale_temp_dirs()
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("latex_preview_temp_cleanup", { clear = true }),
+    callback = function()
+      vim.fn.delete(temp_dir(), "rf")
+    end,
+  })
+end
 
 local function effective_font_size(req)
   if req.display then
@@ -25,7 +67,7 @@ end
 ---@param req { preamble: string, equation: string, display: boolean }
 ---@return string  cache key suitable for use as a filename stem
 local function cache_key(req)
-  local renderer_version = "raster-v7"
+  local renderer_version = "raster-v8"
   local fg = config.get_fg()
   local font_size = effective_font_size(req)
   local density = config.options.render.density
@@ -61,7 +103,8 @@ end
 ---@param id integer?
 ---@return string
 local function temp_stem(buf, id)
-  local dir = vim.fn.stdpath("run") .. "/latex-preview"
+  ensure_temp_cleanup()
+  local dir = temp_dir()
   if not uv.fs_stat(dir) then
     vim.fn.mkdir(dir, "p")
   end
@@ -172,7 +215,17 @@ local function pad_to_cells(png_path, cb)
 
   local bin = vim.fn.executable("magick") == 1 and "magick"
     or (vim.fn.executable("convert") == 1 and "convert" or nil)
-  if not bin then return cb(nil) end
+  if not bin then
+    if not pad_warning_shown then
+      pad_warning_shown = true
+      vim.notify(
+        "[latex-preview] render.pad_to_cells=true but ImageMagick is not available; "
+          .. "equation images may be scaled by the terminal",
+        vim.log.levels.WARN
+      )
+    end
+    return cb(nil)
+  end
   -- Write to a sibling temp file first so a mid-write crash can't corrupt
   -- the cached PNG. Same directory → same filesystem → rename is atomic.
   local tmp = png_path .. ".tmp"

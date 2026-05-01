@@ -12,6 +12,7 @@
 local M = {}
 
 local util = require("latex-preview.util")
+local config = require("latex-preview.config")
 
 -- Renamed from `ok`/`warn`/`err` to `report_*` because `local ok` is an
 -- extremely common idiom for `pcall` results, and shadowing the helper
@@ -81,6 +82,13 @@ local function check_mathjax_full()
   add_candidate("/opt/homebrew/lib/node_modules/mathjax-full")
   add_candidate("/opt/local/lib/node_modules/mathjax-full")
   add_candidate((vim.env.HOME or "") .. "/.npm-global/lib/node_modules/mathjax-full")
+  if vim.fn.executable("node") == 1 then
+    local node_version = vim.fn.systemlist({ "node", "-p", "process.version" })[1]
+    if vim.v.shell_error == 0 and node_version and node_version ~= "" then
+      add_candidate((vim.env.HOME or "")
+        .. "/.nvm/versions/node/" .. node_version .. "/lib/node_modules/mathjax-full")
+    end
+  end
   for _, rtp in ipairs(vim.api.nvim_list_runtime_paths()) do
     add_candidate(rtp .. "/scripts/node_modules/mathjax-full")
     add_candidate(rtp .. "/node_modules/mathjax-full")
@@ -146,6 +154,11 @@ local function check_rasterizer()
       { "Install one of:",
         "  apt install imagemagick librsvg2-bin   (Debian/Ubuntu)",
         "  brew install imagemagick librsvg       (macOS)" })
+  end
+  if config.options.render.pad_to_cells and not magick then
+    report_warn("render.pad_to_cells is enabled but ImageMagick is not available",
+      { "Install ImageMagick (`magick` or `convert`) to pad generated PNGs to terminal-cell boundaries.",
+        "Without padding, some terminals may scale short equations slightly." })
   end
 end
 

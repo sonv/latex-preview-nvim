@@ -12,6 +12,12 @@
 --   auto     - toggle automatic hover
 --   auto-on  - enable automatic hover
 --   auto-off - disable automatic hover
+--   refs     - toggle referenced-equation previews
+--   refs-on  - enable referenced-equation previews
+--   refs-off - disable referenced-equation previews
+--   cites    - toggle citation previews
+--   cites-on - enable citation previews
+--   cites-off - disable citation previews
 --   clear    - delete cached SVG/PNG files
 --   stop     - stop the MathJax daemon
 --   status   - print daemon state
@@ -32,10 +38,14 @@ local function status()
     .. "  daemon ready:    %s\n"
     .. "  hover open:      %s\n"
     .. "  auto hover:      %s\n"
+    .. "  references:      %s\n"
+    .. "  citations:       %s\n"
     .. "  terminal supports graphics: %s\n",
     tostring(daemon.is_ready()),
     tostring(hover.is_open()),
     tostring(lp.auto_hover_enabled()),
+    tostring(lp.references_enabled()),
+    tostring(lp.citations_enabled()),
     tostring(hover.is_supported())
   ))
 end
@@ -62,6 +72,30 @@ local subcommands = {
   ["auto-off"] = function()
     require("latex-preview").set_auto_hover(false)
     vim.notify("latex-preview: auto hover disabled")
+  end,
+  refs = function()
+    local state = require("latex-preview").toggle_references()
+    vim.notify("latex-preview: referenced equations " .. (state and "enabled" or "disabled"))
+  end,
+  ["refs-on"] = function()
+    require("latex-preview").set_references(true)
+    vim.notify("latex-preview: referenced equations enabled")
+  end,
+  ["refs-off"] = function()
+    require("latex-preview").set_references(false)
+    vim.notify("latex-preview: referenced equations disabled")
+  end,
+  cites = function()
+    local state = require("latex-preview").toggle_citations()
+    vim.notify("latex-preview: citations " .. (state and "enabled" or "disabled"))
+  end,
+  ["cites-on"] = function()
+    require("latex-preview").set_citations(true)
+    vim.notify("latex-preview: citations enabled")
+  end,
+  ["cites-off"] = function()
+    require("latex-preview").set_citations(false)
+    vim.notify("latex-preview: citations disabled")
   end,
   clear = function()
     local n = require("latex-preview").clear_cache()

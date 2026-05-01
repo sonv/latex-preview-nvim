@@ -4,6 +4,22 @@
 
 local M = {}
 
+---True iff the character at `idx` in `str` is preceded by an odd number
+---of consecutive backslashes — i.e. it is "escaped" by an unbalanced `\`.
+---`\\$` is NOT escaped (the `\\` is a literal backslash); `\$` IS escaped.
+---@param str string
+---@param idx integer 1-indexed character position
+---@return boolean
+function M.is_escaped(str, idx)
+  local count = 0
+  local i = idx - 1
+  while i >= 1 and str:sub(i, i) == "\\" do
+    count = count + 1
+    i = i - 1
+  end
+  return count % 2 == 1
+end
+
 ---Return true if the given treesitter language parser is available.
 ---`parsers` is the result of `require("nvim-treesitter.parsers")`.
 ---@param parsers table

@@ -140,6 +140,12 @@ git clone https://github.com/your-username/latex-preview.nvim \
 | `:LatexPreview auto` | Toggle automatic hover on/off |
 | `:LatexPreview auto-on` | Enable automatic hover |
 | `:LatexPreview auto-off` | Disable automatic hover |
+| `:LatexPreview refs` | Toggle previews for referenced equations under `\ref` / `\eqref` |
+| `:LatexPreview refs-on` | Enable referenced-equation previews |
+| `:LatexPreview refs-off` | Disable referenced-equation previews |
+| `:LatexPreview cites` | Toggle citation previews under `\cite...` commands |
+| `:LatexPreview cites-on` | Enable citation previews |
+| `:LatexPreview cites-off` | Disable citation previews |
 | `:LatexPreview clear` | Delete cached SVG/PNG files |
 | `:LatexPreview stop` | Stop the daemon (auto-respawns next render) |
 | `:LatexPreview status` | Print daemon and popup state |
@@ -154,6 +160,26 @@ equation**. You can edit, move within the equation, scan around — the
 preview keeps tracking. As soon as your cursor moves *outside* the
 equation, the popup auto-closes. Pressing the toggle key again works
 the same as moving out and re-entering.
+
+The hover target is chosen in this order:
+
+1. A math expression under the cursor renders as an equation preview.
+2. A reference command such as `\ref{...}`, `\eqref{...}`, `\cref{...}`,
+   or `\autoref{...}` previews the labeled equation when
+   `references.enabled = true`.
+3. A citation command such as `\cite{...}` or `\parencite{...}` previews
+   the matching BibTeX entry when `citations.enabled = true`.
+
+Referenced equations are resolved from `\label{...}` commands inside
+equation environments in the current buffer. Citations are resolved from
+local `.bib` files listed with `\bibliography{...}` or
+`\addbibresource{...}`.
+
+Display equations use LaTeX display style by default. Physical line
+breaks in your source are treated as spaces, so wrapped source does not
+force a multi-line render. If you want multiple rendered lines, use an
+explicit math environment such as `align`, `aligned`, `gather`, or
+`multline`.
 
 ### Keymapping
 
@@ -179,6 +205,16 @@ require("latex-preview").close()   -- close only
 vim.keymap.set("n", "<leader>m", function()
   require("latex-preview").toggle()
 end)
+```
+
+The reference/citation toggles can also be mapped automatically:
+
+```lua
+require("latex-preview").setup({
+  setup_keymap = true,
+  references = { toggle_keymap = "<leader>ir" },
+  citations = { toggle_keymap = "<leader>ic" },
+})
 ```
 
 ## Configuration
@@ -221,7 +257,7 @@ require("latex-preview").setup({
     end,
     font_size = 12,            -- inline MathJax font size in pixels
     display_font_size = 12,    -- display MathJax font size in pixels
-    display_math_style = "text", -- "text" for compact previews, "display" for LaTeX display style
+    display_math_style = "display", -- "display" for LaTeX display style, "text" for compact previews
     pad_to_cells = true,       -- prevent terminal-cell rounding from enlarging short equations
     density = 300,             -- DPI for SVG -> PNG
     svg_to_png = "auto",       -- "auto", "rsvg", or "magick"
@@ -238,6 +274,16 @@ require("latex-preview").setup({
   hover = {
     auto_open = nil,        -- nil = follow Snacks image.doc.float
     toggle_keymap = "<leader>iH", -- runtime auto-hover toggle when setup_keymap=true
+  },
+
+  references = {
+    enabled = true,         -- preview equations referenced by \ref, \eqref, \cref, ...
+    toggle_keymap = "<leader>ir", -- runtime toggle when setup_keymap=true
+  },
+
+  citations = {
+    enabled = true,         -- preview BibTeX entries referenced by \cite... commands
+    toggle_keymap = "<leader>ic", -- runtime toggle when setup_keymap=true
   },
 
   snacks = {
@@ -273,6 +319,21 @@ Same approach Overleaf's editor uses:
 This means custom notation packages "just work" without any per-project
 setup.
 
+## References and citations
+
+Reference previews support common one-argument reference commands:
+`\ref`, `\eqref`, `\autoref`, `\cref`, `\Cref`, `\vref`, and `\Vref`.
+The preview shows the equation that contains the matching `\label`.
+
+Citation previews support citation-style commands whose command name
+contains `cite`, including common BibTeX and biblatex forms such as
+`\cite`, `\citet`, `\citep`, `\parencite`, and `\textcite`. For multiple
+keys, the key under the cursor is used when possible; otherwise the
+first key is shown.
+
+Both features are enabled by default and can be toggled at runtime with
+`:LatexPreview refs` and `:LatexPreview cites`.
+
 ## What renders
 
 Anything MathJax supports:
@@ -288,6 +349,11 @@ Anything MathJax supports:
 Doesn't render: TikZ in math, runtime-evaluated macros (`\ifthenelse`,
 counters, lengths), and exotic packages that do more than define macros.
 For those, your `pdflatex` compile remains the source of truth.
+
+Reference and citation previews are static editor lookups. They do not run
+LaTeX, BibTeX, or Biber, so generated labels, imported bibliography data not
+listed in the current buffer, and advanced bibliography inheritance are not
+expanded.
 
 ## Performance (done by Claude)
 

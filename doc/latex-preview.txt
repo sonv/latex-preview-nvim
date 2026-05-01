@@ -75,6 +75,12 @@ Example: >lua
         auto      Toggle automatic hover on/off.
         auto-on   Enable automatic hover.
         auto-off  Disable automatic hover.
+        refs      Toggle referenced-equation previews on/off.
+        refs-on   Enable referenced-equation previews.
+        refs-off  Disable referenced-equation previews.
+        cites     Toggle citation previews on/off.
+        cites-on  Enable citation previews.
+        cites-off Disable citation previews.
         clear     Remove cached SVG/PNG files from disk.
         stop      Stop the MathJax daemon (auto-respawns on next render).
         status    Print daemon and popup state.
@@ -82,6 +88,24 @@ Example: >lua
 The popup auto-closes when the cursor leaves the current equation or when
 you leave/wipe the source buffer. While the cursor remains inside the same
 equation, it live-updates in normal and insert mode.
+
+The hover target is chosen in this order:
+
+  1. A math expression under the cursor renders as an equation preview.
+  2. A reference command such as \ref{...}, \eqref{...}, \cref{...}, or
+     \autoref{...} previews the labeled equation when
+     references.enabled=true.
+  3. A citation command such as \cite{...} or \parencite{...} previews the
+     matching BibTeX entry when citations.enabled=true.
+
+Referenced equations are resolved from \label{...} commands inside equation
+environments in the current buffer. Citations are resolved from local .bib
+files listed with \bibliography{...} or \addbibresource{...}.
+
+Display equations use LaTeX display style by default. Physical line breaks
+in your source are treated as spaces, so wrapped source does not force a
+multi-line render. If you want multiple rendered lines, use an explicit
+math environment such as align, aligned, gather, or multline.
 
 ==============================================================================
 5. KEYMAPPING                                       *latex-preview-keymapping*
@@ -103,6 +127,15 @@ through is exact.
 
 If you'd rather have the plugin install this mapping for you, set
 `setup_keymap = true` in setup().
+
+Reference and citation toggles can also be mapped automatically: >lua
+
+    require("latex-preview").setup({
+      setup_keymap = true,
+      references = { toggle_keymap = "<leader>ir" },
+      citations = { toggle_keymap = "<leader>ic" },
+    })
+<
 
 ==============================================================================
 6. CONFIGURATION                                       *latex-preview-config*
@@ -134,7 +167,7 @@ Default config: >lua
         fg = function() ... end,    -- current Normal fg
         font_size = 12,
         display_font_size = 12,
-        display_math_style = "text",
+        display_math_style = "display",
         pad_to_cells = true,
         density = 300,
         svg_to_png = "auto",
@@ -149,6 +182,16 @@ Default config: >lua
       hover = {
         auto_open = nil,
         toggle_keymap = "<leader>iH",
+      },
+
+      references = {
+        enabled = true,
+        toggle_keymap = "<leader>ir",
+      },
+
+      citations = {
+        enabled = true,
+        toggle_keymap = "<leader>ic",
       },
 
       snacks = {
@@ -204,16 +247,37 @@ hover.toggle_keymap ~
         is registered through Snacks.toggle so which-key can show the current
         enabled/disabled state.
 
+                                                *latex-preview-config-references*
+references.enabled ~
+        If true, hovering over \ref, \eqref, \autoref, \cref, \Cref, \vref,
+        or \Vref previews the equation containing the matching \label.
+
+references.toggle_keymap ~
+        Optional key for the runtime referenced-equation toggle when
+        setup_keymap=true. Defaults to <leader>ir.
+
+                                                 *latex-preview-config-citations*
+citations.enabled ~
+        If true, hovering over citation-style commands whose names contain
+        "cite" previews the matching BibTeX entry from local .bib files
+        referenced with \bibliography or \addbibresource.
+
+citations.toggle_keymap ~
+        Optional key for the runtime citation toggle when setup_keymap=true.
+        Defaults to <leader>ic.
+
 ==============================================================================
 7. HOW IT WORKS                                       *latex-preview-internals*
 
 When you trigger hover:
 
-1. The plugin parses the buffer to find all math expressions and locates
-   the one containing the cursor. If none, it returns false (so the
+1. The plugin resolves the hover target. It first checks for a math
+   expression under the cursor, then a supported reference command, then a
+   supported citation command. If none match, it returns false (so the
    keymap can fall through to LSP).
 
-2. It extracts every macro definition from the buffer plus any matching
+2. For equation previews, it extracts every macro definition from the buffer
+   plus any matching
    commands in local .sty files referenced via \usepackage.
 
 3. The preamble + equation goes to a long-running Node daemon running
@@ -231,6 +295,10 @@ When you trigger hover:
    triggers either a re-call (if the cursor moved to a new equation) or
    a close.
 
+Reference previews reuse the same equation rendering pipeline after resolving
+the target \label in the current buffer. Citation previews open a text popup
+containing the matching BibTeX entry.
+
 ==============================================================================
 8. LIMITATIONS                                     *latex-preview-limitations*
 
@@ -241,6 +309,9 @@ MathJax is a TeX subset; the popup will fail to render:
   \RequirePackage, and \input directives are scanned
 - Anything requiring runtime TeX execution: \ifthenelse, counters, etc.
 - Custom packages that do more than define macros (options, hooks, etc.)
+- Reference and citation previews are static editor lookups. They do not run
+  LaTeX, BibTeX, or Biber, so generated labels and advanced bibliography
+  inheritance are not expanded.
 
 The plugin requires a Kitty-graphics-capable terminal (kitty, wezterm,
 or ghostty). On other terminals, the popup will appear with placeholder

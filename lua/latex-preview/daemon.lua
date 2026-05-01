@@ -81,7 +81,6 @@ end
 ---Resolve the daemon command via config or runtimepath lookup.
 ---@return string[]?
 local function resolve_cmd()
-  if state.cmd then return state.cmd end
   local cfg = config.options.daemon
   if cfg.cmd and #cfg.cmd > 0 then
     state.cmd = vim.deepcopy(cfg.cmd)
@@ -270,7 +269,7 @@ function M.render(req, cb)
     display = req.display and true or false,
     color = req.color or "000000",
     font_size = req.font_size or 11,
-    display_math_style = req.display_math_style or "text",
+    display_math_style = req.display_math_style or "display",
   }) .. "\n"
   state.stdin:write(payload, function(err)
     if err then

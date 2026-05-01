@@ -170,17 +170,14 @@ function normalizeEquation(equation, display, displayMathStyle) {
   let math = equation.replace(/\\label\s*\{[^{}]*\}/g, "").trim();
   const style = display && displayMathStyle === "text" ? "\\textstyle " : "";
   if (!display || !math.includes("\n")) return style + math;
-  if (/\\begin\s*\{(?:aligned|alignedat|align|alignat|split|gathered|gather|matrix|pmatrix|bmatrix|cases)\}/.test(math)) {
+  if (/\\begin\s*\{(?:aligned|alignedat|align\*?|alignat\*?|split|gathered|gather\*?|multline\*?|equation\*?|eqnarray\*?|flalign\*?|matrix|pmatrix|bmatrix|cases)\}/.test(math)) {
     return style + math;
   }
   const lines = math
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !/^\\(?:notag|nonumber)\b/.test(line))
-    .map((line) => line.replace(/\\\\\s*$/, "").trim())
-    .map((line) => style + line);
-  if (lines.length <= 1) return lines[0] || math;
-  return "\\begin{aligned}\n" + lines.join(" \\\\\n") + "\n\\end{aligned}";
+    .filter((line) => line && !/^\\(?:notag|nonumber)\b/.test(line));
+  return style + (lines.join(" ") || math.replace(/\s+/g, " "));
 }
 
 // ---------------------------------------------------------------------------

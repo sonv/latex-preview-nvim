@@ -75,6 +75,27 @@ local function install_auto_hover_toggle()
   })
 end
 
+local function install_feature_toggle(id, name, opts, get, set)
+  if not config.options.setup_keymap or not opts or not opts.toggle_keymap then return end
+
+  local snacks = snacks_image_config()
+  if snacks and snacks.toggle then
+    snacks.toggle({
+      id = id,
+      name = name,
+      get = get,
+      set = set,
+    }):map(opts.toggle_keymap)
+    return
+  end
+
+  vim.keymap.set("n", opts.toggle_keymap, function()
+    set(not get())
+  end, {
+    desc = "Toggle " .. name,
+  })
+end
+
 local function disable_snacks_document_images()
   local snacks, image_config = snacks_image_config()
   if not image_config then return end
@@ -92,7 +113,11 @@ local function disable_snacks_document_images()
   })
   if ok_autocmds then
     for _, autocmd in ipairs(autocmds) do
-      pcall(vim.api.nvim_del_autocmd, autocmd.id)
+      -- Snacks' document renderer installs one broad FileType autocmd. Keep
+      -- any future filetype-specific handlers in the same group intact.
+      if autocmd.pattern == nil or autocmd.pattern == "*" then
+        pcall(vim.api.nvim_del_autocmd, autocmd.id)
+      end
     end
   end
 
@@ -119,6 +144,20 @@ function M.setup(opts)
   ensure_auto_hover_autocmd()
   if auto_hover_enabled() then attach_auto_hover_buffers() end
   install_auto_hover_toggle()
+  install_feature_toggle(
+    "latex_preview_references",
+    "LaTeX Preview References",
+    config.options.references,
+    function() return M.references_enabled() end,
+    function(state) M.set_references(state) end
+  )
+  install_feature_toggle(
+    "latex_preview_citations",
+    "LaTeX Preview Citations",
+    config.options.citations,
+    function() return M.citations_enabled() end,
+    function(state) M.set_citations(state) end
+  )
 
   -- Optional: install a default keymap on entering a supported filetype.
   -- The mapping is `ih` (mnemonic: "inspect here"). It's not a normal-
@@ -183,6 +222,50 @@ end
 function M.toggle_auto_hover()
   local state = not M.auto_hover_enabled()
   M.set_auto_hover(state)
+  return state
+end
+
+---Whether reference hover previews are currently enabled.
+---@return boolean
+function M.references_enabled()
+  return config.options.references and config.options.references.enabled == true
+end
+
+---Enable or disable reference hover previews at runtime.
+---@param state boolean
+function M.set_references(state)
+  config.options.references = config.options.references or {}
+  config.options.references.enabled = state == true
+  if not state then require("latex-preview.hover").close() end
+end
+
+---Toggle reference hover previews at runtime.
+---@return boolean
+function M.toggle_references()
+  local state = not M.references_enabled()
+  M.set_references(state)
+  return state
+end
+
+---Whether citation hover previews are currently enabled.
+---@return boolean
+function M.citations_enabled()
+  return config.options.citations and config.options.citations.enabled == true
+end
+
+---Enable or disable citation hover previews at runtime.
+---@param state boolean
+function M.set_citations(state)
+  config.options.citations = config.options.citations or {}
+  config.options.citations.enabled = state == true
+  if not state then require("latex-preview.hover").close() end
+end
+
+---Toggle citation hover previews at runtime.
+---@return boolean
+function M.toggle_citations()
+  local state = not M.citations_enabled()
+  M.set_citations(state)
   return state
 end
 

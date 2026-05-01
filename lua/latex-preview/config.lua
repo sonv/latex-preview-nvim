@@ -18,6 +18,8 @@ local M = {}
 ---@field render LatexPreview.RenderConfig
 ---@field popup LatexPreview.PopupConfig
 ---@field hover LatexPreview.HoverConfig
+---@field references LatexPreview.FeatureToggleConfig
+---@field citations LatexPreview.FeatureToggleConfig
 ---@field snacks LatexPreview.SnacksConfig
 
 ---@class LatexPreview.DaemonConfig
@@ -48,6 +50,10 @@ local M = {}
 ---@class LatexPreview.HoverConfig
 ---@field auto_open boolean? Override Snacks image.doc.float for auto hover.
 ---@field toggle_keymap string|false Key mapped through Snacks.toggle when setup_keymap=true.
+
+---@class LatexPreview.FeatureToggleConfig
+---@field enabled boolean Enable the hover target type.
+---@field toggle_keymap string|false Optional key mapped through Snacks.toggle when setup_keymap=true.
 
 ---@class LatexPreview.SnacksConfig
 ---@field disable_document_images boolean Disable snacks.image's document inline/auto previewer.
@@ -99,7 +105,7 @@ M.defaults = {
     end,
     font_size = 12,
     display_font_size = 12,
-    display_math_style = "text",
+    display_math_style = "display",
     pad_to_cells = true,
     density = 300,
     svg_to_png = "auto",
@@ -121,6 +127,16 @@ M.defaults = {
     -- Runtime toggle for auto hover. This uses Snacks.toggle when available,
     -- so which-key can show the enabled/disabled state.
     toggle_keymap = "<leader>iH",
+  },
+
+  references = {
+    enabled = true,
+    toggle_keymap = "<leader>ir",
+  },
+
+  citations = {
+    enabled = true,
+    toggle_keymap = "<leader>ic",
   },
 
   snacks = {
