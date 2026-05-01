@@ -22,7 +22,9 @@ local util = require("latex-preview.util")
 ---@field start_col integer 0-indexed inclusive
 ---@field end_row integer 0-indexed inclusive
 ---@field end_col integer 0-indexed exclusive
----@field text string The math content WITHOUT outer delimiters.
+---@field text string The math content without inline/display delimiters.
+---Environment delimiters are preserved for math environments that MathJax
+---needs in order to interpret alignment markers such as `&` and `\\`.
 ---@field display boolean True for display-mode (\[, $$, \begin{equation*}, ...).
 
 -- Treesitter path -----------------------------------------------------------
@@ -38,10 +40,6 @@ local TS_QUERIES = {
   ]],
 }
 
-local function escape_lua_pattern(s)
-  return (s:gsub("([^%w])", "%%%1"))
-end
-
 local function strip_math_delimiters(text)
   local stripped = vim.trim(text)
   stripped = stripped
@@ -50,16 +48,11 @@ local function strip_math_delimiters(text)
     :gsub("^\\%[", ""):gsub("\\%]$", "")
     :gsub("^\\%(", ""):gsub("\\%)$", "")
 
-  local env = stripped:match("^\\begin%s*{([^}]+)}")
-  if env then
-    local pat = escape_lua_pattern(env)
-    local body = stripped
-      :gsub("^\\begin%s*{" .. pat .. "}", "", 1)
-      :gsub("\\end%s*{" .. pat .. "}%s*$", "", 1)
-    if body ~= stripped and env:gsub("%*$", "") == "alignat" then
-      body = body:gsub("^%s*{%s*%d+%s*}", "", 1)
-    end
-    if body ~= stripped then stripped = body end
+  if stripped:match("^\\begin%s*{[^}]+}") then
+    -- MathJax needs the environment wrapper for AMS multiline environments
+    -- such as align*, gather, multline, flalign, and eqnarray. Stripping it
+    -- leaves bare alignment markers (`&`, `\\`) that fail with "Misplaced &".
+    return stripped
   end
 
   return vim.trim(stripped)
@@ -96,7 +89,8 @@ local function ts_extract(buf, lang)
         or trimmed_text:match("^\\%[")
         or trimmed_text:match("^\\begin")
     end
-    -- Strip the outer delimiters so we can pass clean math to MathJax.
+    -- Strip inline/display math delimiters. Preserve math-environment
+    -- wrappers because MathJax needs them for environments such as align*.
     local stripped = strip_math_delimiters(text)
     if stripped ~= "" then
       results[#results + 1] = {
@@ -166,7 +160,7 @@ local function regex_extract(buf)
   -- Each entry: {pattern, display, kind}
   -- kind:
   --   "delim_match"  the capture is the math text directly
-  --   "env"          extract body via a separate match (env name varies)
+  --   "env"          keep the full environment wrapper for MathJax
   local patterns = {
     -- $$...$$ display, line-spanning. The capture is the body.
     { pat = "%$%$(.-)%$%$",          display = true,  kind = "delim_match" },
@@ -174,15 +168,15 @@ local function regex_extract(buf)
     { pat = "\\%[(.-)\\%]",          display = true,  kind = "delim_match" },
     -- \(...\) inline
     { pat = "\\%((.-)\\%)",          display = false, kind = "delim_match" },
-    -- Math environments with optional star. alignat has one required
-    -- environment argument; it is delimiter syntax, not equation content.
-    { pat = "\\begin{equation%*?}(.-)\\end{equation%*?}", display = true, kind = "delim_match" },
-    { pat = "\\begin{align%*?}(.-)\\end{align%*?}",       display = true, kind = "delim_match" },
-    { pat = "\\begin{alignat%*?}%s*%b{}(.-)\\end{alignat%*?}", display = true, kind = "delim_match" },
-    { pat = "\\begin{flalign%*?}(.-)\\end{flalign%*?}",   display = true, kind = "delim_match" },
-    { pat = "\\begin{gather%*?}(.-)\\end{gather%*?}",     display = true, kind = "delim_match" },
-    { pat = "\\begin{multline%*?}(.-)\\end{multline%*?}", display = true, kind = "delim_match" },
-    { pat = "\\begin{eqnarray%*?}(.-)\\end{eqnarray%*?}", display = true, kind = "delim_match" },
+    -- Math environments with optional star. Keep the wrapper so MathJax can
+    -- interpret environment-specific alignment syntax.
+    { pat = "\\begin{equation%*?}(.-)\\end{equation%*?}", display = true, kind = "env" },
+    { pat = "\\begin{align%*?}(.-)\\end{align%*?}",       display = true, kind = "env" },
+    { pat = "\\begin{alignat%*?}%s*%b{}(.-)\\end{alignat%*?}", display = true, kind = "env" },
+    { pat = "\\begin{flalign%*?}(.-)\\end{flalign%*?}",   display = true, kind = "env" },
+    { pat = "\\begin{gather%*?}(.-)\\end{gather%*?}",     display = true, kind = "env" },
+    { pat = "\\begin{multline%*?}(.-)\\end{multline%*?}", display = true, kind = "env" },
+    { pat = "\\begin{eqnarray%*?}(.-)\\end{eqnarray%*?}", display = true, kind = "env" },
   }
 
   for _, p in ipairs(patterns) do
@@ -191,7 +185,12 @@ local function regex_extract(buf)
       local s, e, body = source:find(p.pat, pos2)
       if not s then break end
       if not_consumed(s, e) then
-        local text = vim.trim(body or "")
+        local text
+        if p.kind == "env" then
+          text = vim.trim(source:sub(s, e))
+        else
+          text = vim.trim(body or "")
+        end
         if text ~= "" then
           local sr, sc = byte_to_rc(s - 1)
           local er, ec = byte_to_rc(e)
