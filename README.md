@@ -20,7 +20,7 @@ Personally, I've only tested with Kitty, however.
 
 Demo:
 
-[![Watch Demo](demo/demo.mov)]
+[[Watch Demo on YouTube](https://youtu.be/Naqs8XSB0ko)]
 
 ## Why this design
 
