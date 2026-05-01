@@ -57,7 +57,7 @@ fine for occasional preview but too slow for live editing.
 - **Node.js 18+**
 - **A graphics-capable terminal**: Kitty, iTerm2, WezTerm, or Ghostty
 - **`mathjax-full`** (npm): `npm install -g mathjax-full`
-- **An SVG rasterizer**: ImageMagick + librsvg2 (recommended), or rsvg-convert alone
+- **An SVG rasterizer**: `rsvg-convert` / librsvg (**strongly recommended** — handles MathJax SVG and `currentColor` correctly); ImageMagick is a fallback but may silently produce blank or corrupt output on complex equations
 
 ### Linux
 

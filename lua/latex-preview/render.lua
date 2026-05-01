@@ -209,9 +209,8 @@ function M.render(req, cb)
   -- (current), which the resolver will treat as either the active buffer
   -- (when called from the editor) or fall through to the global cache.
   local buf = req.buf or 0
-  local buf_modified = buf ~= 0 and vim.api.nvim_buf_is_valid(buf)
-    and vim.bo[buf].modified
-    or vim.bo.modified
+  local buf_modified = (buf ~= 0 and vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified)
+    or (buf == 0 and vim.bo.modified)
   local use_cache = config.options.cache and not req.live and not buf_modified
   local key = cache_key(req)
   local svg_path
