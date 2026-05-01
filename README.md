@@ -18,9 +18,11 @@ Personally, I've only tested with Kitty, however.
 
 ## What it looks like
 
-Demo:
 
-[[Watch Demo on YouTube](https://youtu.be/Naqs8XSB0ko)]
+[Demo of equation display and live update](https://youtu.be/Naqs8XSB0ko)
+
+[Demo of displaying references](https://youtu.be/VaEr1X8wXLw)
+
 
 ## Why this design
 
