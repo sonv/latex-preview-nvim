@@ -4,7 +4,7 @@
 
 Inspired by Overleaf's functionality.
 
-This is a hover-style LaTeX math preview for Neovim that can **live update while typing**.
+This is a hover-style LaTeX math preview for Neovim that can **live update while typing, show referenced equations and citations**.
 Press a key inside a math expression and a small floating window pops up with the rendered equation —
 the way Overleaf shows preview tooltips on hover.
 
