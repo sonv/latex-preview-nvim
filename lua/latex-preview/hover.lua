@@ -566,18 +566,26 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
       font_size = not eq.display and math.max(config.options.render.font_size or 11, 12) or nil,
       pad_to_cells = eq.display and nil or false,
     }, function(err, png_path)
+      -- See cleanup_unused in M.open: each live render writes its own
+      -- per-equation temp file; clean up if we won't end up using it.
+      local function cleanup_unused()
+        if png_path then
+          pcall(os.remove, png_path)
+          pcall(os.remove, (png_path:gsub("%.png$", ".svg")))
+        end
+      end
       if err or not png_path then return end
-      if active_render_id ~= render_id then return end
-      if not current or current.render_id ~= render_id or current.win ~= win then return end
-      if not vim.api.nvim_buf_is_valid(win.buf) then return end
-      if not vim.api.nvim_buf_is_valid(source_buf) or not vim.api.nvim_win_is_valid(source_win) then return end
+      if active_render_id ~= render_id then return cleanup_unused() end
+      if not current or current.render_id ~= render_id or current.win ~= win then return cleanup_unused() end
+      if not vim.api.nvim_buf_is_valid(win.buf) then return cleanup_unused() end
+      if not vim.api.nvim_buf_is_valid(source_buf) or not vim.api.nvim_win_is_valid(source_win) then return cleanup_unused() end
       local ok_target, live_target = pcall(vim.api.nvim_win_call, source_win, function()
         if vim.api.nvim_get_current_buf() ~= source_buf then return nil end
         return target_under_cursor(source_buf)
       end)
-      if not ok_target then return end
-      if not live_target or live_target.signature ~= target.signature then return end
-      if vim.fn.sha256(extract.get_preamble(source_buf)) ~= preamble_hash then return end
+      if not ok_target then return cleanup_unused() end
+      if not live_target or live_target.signature ~= target.signature then return cleanup_unused() end
+      if vim.fn.sha256(extract.get_preamble(source_buf)) ~= preamble_hash then return cleanup_unused() end
 
       local placement_opts = snacks.config.merge({}, snacks.image.config.doc, {
         inline = true,
@@ -735,14 +743,23 @@ function M.open()
   end
 
   render.render(req, function(err, png_path)
-    if active_render_id ~= render_id then return end
-    if current and current.render_id ~= render_id then return end
-    if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(source_win) then return end
-    if vim.api.nvim_get_current_buf() ~= buf or vim.api.nvim_get_current_win() ~= source_win then return end
+    -- Live renders write to a per-call temp file in /run/latex-preview/<pid>/.
+    -- If we early-exit any check below (cursor moved, signature drifted, etc.)
+    -- the PNG and its sibling SVG would otherwise leak until VimLeavePre.
+    local function cleanup_unused()
+      if png_path then
+        pcall(os.remove, png_path)
+        pcall(os.remove, (png_path:gsub("%.png$", ".svg")))
+      end
+    end
+    if active_render_id ~= render_id then return cleanup_unused() end
+    if current and current.render_id ~= render_id then return cleanup_unused() end
+    if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(source_win) then return cleanup_unused() end
+    if vim.api.nvim_get_current_buf() ~= buf or vim.api.nvim_get_current_win() ~= source_win then return cleanup_unused() end
     local live_target = target_under_cursor(buf)
-    if not live_target or live_target.type ~= "equation" then return end
+    if not live_target or live_target.type ~= "equation" then return cleanup_unused() end
     local live_eq = live_target.equation
-    if render_signature(extract.get_preamble(buf), live_eq) ~= signature then return end
+    if render_signature(extract.get_preamble(buf), live_eq) ~= signature then return cleanup_unused() end
     if err or not png_path then
       vim.notify("[latex-preview] " .. (err or "render failed"), vim.log.levels.WARN)
       return

@@ -32,7 +32,7 @@ import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
 
 function parseArgs(a) {
-  const o = { display: false, color: "000000", daemon: false };
+  const o = { display: false, color: "000000", daemon: false, listPaths: false };
   for (let i = 2; i < a.length; i++) {
     const k = a[i];
     if (k === "--in") o.input = a[++i];
@@ -41,8 +41,54 @@ function parseArgs(a) {
     else if (k === "--color") o.color = a[++i];
     else if (k === "--ex") o.ex = parseFloat(a[++i]);
     else if (k === "--daemon") o.daemon = true;
+    else if (k === "--list-paths") o.listPaths = true;
   }
   return o;
+}
+
+// ---------------------------------------------------------------------------
+// Canonical mathjax-full candidate path list. The Lua side (health.lua)
+// invokes this script with --list-paths to read this list rather than
+// duplicating it — keep the resolution logic in exactly one place.
+// ---------------------------------------------------------------------------
+async function buildCandidatePaths({ includeNpm = true } = {}) {
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const seen = new Set();
+  const candidates = [];
+  const add = (p) => {
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    candidates.push(p);
+  };
+
+  add(process.env.LATEX_PREVIEW_MATHJAX_PATH);
+  add(process.env.SNACKS_MATHJAX_PATH);
+  add(path.join(here, "node_modules", "mathjax-full"));
+  add(path.join(here, "..", "node_modules", "mathjax-full"));
+  add(path.join(process.cwd(), "node_modules", "mathjax-full"));
+  for (const p of [
+    "/usr/lib/node_modules/mathjax-full",
+    "/usr/local/lib/node_modules/mathjax-full",
+    "/opt/homebrew/lib/node_modules/mathjax-full",
+    "/opt/local/lib/node_modules/mathjax-full",
+    path.join(process.env.HOME || "", ".npm-global/lib/node_modules/mathjax-full"),
+    path.join(process.env.HOME || "",
+      ".nvm/versions/node/" + process.version + "/lib/node_modules/mathjax-full"),
+  ]) add(p);
+  if (includeNpm) {
+    try {
+      const npmRoot = execFileSync("npm", ["root", "-g"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      add(path.join(npmRoot, "mathjax-full"));
+    } catch (_) {
+      // npm is optional; explicit env/local/hardcoded paths may still work.
+    }
+  }
+  return candidates;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,44 +98,22 @@ function parseArgs(a) {
 async function bootMathJax() {
   const path = await import("node:path");
   const fsSync = await import("node:fs");
-  const { fileURLToPath, pathToFileURL } = await import("node:url");
-  const here = path.dirname(fileURLToPath(import.meta.url));
+  const { pathToFileURL } = await import("node:url");
 
-  const candidates = [];
-  const seen = new Set();
-  const addCandidate = (p) => {
-    if (!p || seen.has(p)) return;
-    seen.add(p);
-    candidates.push(p);
+  // First pass: try cheap candidates only. `npm root -g` adds 100+ms of
+  // process spawn even when the answer is going to be a path we already
+  // checked — defer it until the obvious locations have all missed.
+  const findIn = (cands) => {
+    for (const c of cands) {
+      if (c && fsSync.existsSync(path.join(c, "package.json"))) return c;
+    }
+    return null;
   };
-
-  addCandidate(process.env.LATEX_PREVIEW_MATHJAX_PATH);
-  addCandidate(process.env.SNACKS_MATHJAX_PATH);
-  addCandidate(path.join(here, "node_modules", "mathjax-full"));
-  addCandidate(path.join(here, "..", "node_modules", "mathjax-full"));
-  addCandidate(path.join(process.cwd(), "node_modules", "mathjax-full"));
-  for (const p of [
-    "/usr/lib/node_modules/mathjax-full",
-    "/usr/local/lib/node_modules/mathjax-full",
-    "/opt/homebrew/lib/node_modules/mathjax-full",
-    "/opt/local/lib/node_modules/mathjax-full",
-    path.join(process.env.HOME || "", ".npm-global/lib/node_modules/mathjax-full"),
-    path.join(process.env.HOME || "",
-      ".nvm/versions/node/" + process.version + "/lib/node_modules/mathjax-full"),
-  ]) addCandidate(p);
-  try {
-    const npmRoot = execFileSync("npm", ["root", "-g"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    addCandidate(path.join(npmRoot, "mathjax-full"));
-  } catch (_) {
-    // npm is optional here; explicit env/local/hardcoded paths may still work.
-  }
-
-  let mjPath = null;
-  for (const c of candidates) {
-    if (c && fsSync.existsSync(path.join(c, "package.json"))) { mjPath = c; break; }
+  let candidates = await buildCandidatePaths({ includeNpm: false });
+  let mjPath = findIn(candidates);
+  if (!mjPath) {
+    candidates = await buildCandidatePaths({ includeNpm: true });
+    mjPath = findIn(candidates);
   }
   if (!mjPath) {
     stderr.write(
@@ -97,7 +121,7 @@ async function bootMathJax() {
       "  npm install -g mathjax-full@3\n" +
       "Or set LATEX_PREVIEW_MATHJAX_PATH to its install dir.\n" +
       "Checked:\n" +
-      candidates.filter(Boolean).map((p) => "  " + p).join("\n") +
+      candidates.map((p) => "  " + p).join("\n") +
       "\n"
     );
     exit(1);
@@ -315,8 +339,18 @@ async function runOneShot(opts) {
   await fs.writeFile(opts.output, svg, "utf8");
 }
 
+// ---------------------------------------------------------------------------
+// Path-listing mode. Used by health.lua to read the canonical candidate
+// list without having to mirror the resolution logic in Lua.
+// ---------------------------------------------------------------------------
+async function listPaths() {
+  const candidates = await buildCandidatePaths({ includeNpm: true });
+  for (const c of candidates) stdout.write(c + "\n");
+}
+
 async function main() {
   const opts = parseArgs(argv);
+  if (opts.listPaths) return listPaths();
   if (opts.daemon) return runDaemon();
   return runOneShot(opts);
 }

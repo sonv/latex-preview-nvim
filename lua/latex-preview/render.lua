@@ -34,8 +34,9 @@ local function cleanup_stale_temp_dirs()
   local base = temp_base_dir()
   if not uv.fs_stat(base) then return end
   local handle = uv.fs_scandir(base)
+  if not handle then return end
   local current_pid = uv.os_getpid()
-  while handle do
+  while true do
     local name, typ = uv.fs_scandir_next(handle)
     if not name then break end
     local pid = tonumber(name)
@@ -262,13 +263,14 @@ end
 ---@param req { preamble: string, equation: string, display: boolean, buf: integer?, live: boolean?, live_id: integer?, font_size: integer?, pad_to_cells: boolean? }
 ---@param cb fun(err: string?, png_path: string?)
 function M.render(req, cb)
-  -- buf is optional for backward compatibility and for tests that don't
-  -- need per-buffer cache_dir resolution. When omitted we use buf 0
-  -- (current), which the resolver will treat as either the active buffer
-  -- (when called from the editor) or fall through to the global cache.
-  local buf = req.buf or 0
-  local buf_modified = (buf ~= 0 and vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified)
-    or (buf == 0 and vim.bo.modified)
+  -- Resolve buf eagerly to a real buffer ID. req.buf is optional for
+  -- backward compatibility and for tests; when omitted we snap to the
+  -- active buffer once, here, so every downstream check (buf_modified,
+  -- cache_dir, temp_stem) sees the same buffer even if the user later
+  -- switches windows while a render is in flight.
+  local buf = req.buf
+  if not buf or buf == 0 then buf = vim.api.nvim_get_current_buf() end
+  local buf_modified = vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified
   local use_cache = config.options.cache and not req.live and not buf_modified
   local key = cache_key(req)
   local svg_path
@@ -289,6 +291,17 @@ function M.render(req, cb)
     return vim.schedule(function() cb(nil, png_path) end)
   end
 
+  -- For temp (non-cached) renders, leave no debris on the filesystem when
+  -- any pipeline stage fails. For cached renders we keep partial files —
+  -- a half-written SVG without a PNG signals to the next call that the
+  -- rasterizer crashed and the request should be retried.
+  local function cleanup_temps()
+    if not use_cache then
+      pcall(os.remove, svg_path)
+      pcall(os.remove, png_path)
+    end
+  end
+
   local fg_hex = config.get_fg():gsub("^#", "")
   daemon.render({
     preamble = req.preamble or "",
@@ -298,19 +311,19 @@ function M.render(req, cb)
     font_size = effective_font_size(req),
     display_math_style = config.options.render.display_math_style,
   }, function(err, svg)
-    if err then return cb(err, nil) end
-    if not svg then return cb("daemon returned no svg", nil) end
+    if err then cleanup_temps(); return cb(err, nil) end
+    if not svg then cleanup_temps(); return cb("daemon returned no svg", nil) end
     -- Write SVG.
     local fd = io.open(svg_path, "w")
-    if not fd then return cb("cannot open " .. svg_path .. " for write", nil) end
+    if not fd then cleanup_temps(); return cb("cannot open " .. svg_path .. " for write", nil) end
     fd:write(svg)
     fd:close()
     -- Rasterize.
     svg_to_png(svg_path, png_path, function(rerr)
-      if rerr then return cb(rerr, nil) end
+      if rerr then cleanup_temps(); return cb(rerr, nil) end
       if not should_pad_to_cells(req) then return cb(nil, png_path) end
       pad_to_cells(png_path, function(perr)
-        if perr then return cb(perr, nil) end
+        if perr then cleanup_temps(); return cb(perr, nil) end
         cb(nil, png_path)
       end)
     end)
@@ -327,8 +340,9 @@ function M.clear_cache(buf)
   local dir = config.get_cache_dir(buf)
   if not uv.fs_stat(dir) then return 0 end
   local handle = uv.fs_scandir(dir)
+  if not handle then return 0 end
   local removed = 0
-  while handle do
+  while true do
     local name = uv.fs_scandir_next(handle)
     if not name then break end
     if name:match("%.svg$")

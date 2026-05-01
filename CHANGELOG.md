@@ -67,6 +67,11 @@ Rolling changes are listed newest first by date.
 - Improved `:checkhealth latex-preview` detection for nvm-managed global `mathjax-full`.
 - Made daemon command resolution respect later `setup({ daemon = { cmd = ... } })` changes.
 - Narrowed Snacks document-render autocmd removal to avoid deleting unrelated future `snacks.image` FileType handlers.
+- Fixed live-render temporary files accumulating in the per-PID temp directory (`stdpath("run")/latex-preview/<pid>/`) when the cursor moved during a render: superseded in-flight renders now delete their SVG/PNG immediately instead of waiting for `VimLeavePre`.
+- Fixed render-error paths leaving partial SVG/PNG files behind when the daemon, rasterizer, or pad-to-cells step fails on a non-cached render.
+- Fixed `render.lua`'s buffer-modified check using the wrong buffer when `req.buf` was omitted: the request now snaps to the active buffer once at entry instead of re-reading the global `vim.bo.modified` from a later async context.
+- Deduplicated the `mathjax-full` candidate-path list. The daemon script (`scripts/mathjax-daemon.mjs`) is now the single source of truth and exposes the list via a new `--list-paths` mode; `:checkhealth latex-preview` reads from there instead of mirroring the list in Lua.
+- Daemon boot now defers the `npm root -g` probe until the cheaper candidates miss, saving a process spawn on every successful boot.
 
 ### Documentation
 

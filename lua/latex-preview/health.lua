@@ -64,43 +64,38 @@ local function check_executable(name, advice)
   end
 end
 
-local function check_mathjax_full()
-  -- The daemon script searches several locations; we replicate the search
-  -- here to give the user a precise error instead of a vague one.
-  local candidates, seen = {}, {}
-  local function add_candidate(p)
-    if not p or p == "" or seen[p] then return end
-    seen[p] = true
-    table.insert(candidates, p)
-  end
-
-  add_candidate(vim.env.LATEX_PREVIEW_MATHJAX_PATH)
-  add_candidate(vim.env.SNACKS_MATHJAX_PATH) -- legacy, supported for migration users
-  add_candidate(vim.fn.getcwd() .. "/node_modules/mathjax-full")
-  add_candidate("/usr/lib/node_modules/mathjax-full")
-  add_candidate("/usr/local/lib/node_modules/mathjax-full")
-  add_candidate("/opt/homebrew/lib/node_modules/mathjax-full")
-  add_candidate("/opt/local/lib/node_modules/mathjax-full")
-  add_candidate((vim.env.HOME or "") .. "/.npm-global/lib/node_modules/mathjax-full")
-  if vim.fn.executable("node") == 1 then
-    local node_version = vim.fn.systemlist({ "node", "-p", "process.version" })[1]
-    if vim.v.shell_error == 0 and node_version and node_version ~= "" then
-      add_candidate((vim.env.HOME or "")
-        .. "/.nvm/versions/node/" .. node_version .. "/lib/node_modules/mathjax-full")
-    end
-  end
+local function find_daemon_script()
   for _, rtp in ipairs(vim.api.nvim_list_runtime_paths()) do
-    add_candidate(rtp .. "/scripts/node_modules/mathjax-full")
-    add_candidate(rtp .. "/node_modules/mathjax-full")
+    local p = rtp .. "/scripts/mathjax-daemon.mjs"
+    if vim.fn.filereadable(p) == 1 then return p end
   end
-  if vim.fn.executable("npm") == 1 then
-    local npm_root = vim.fn.systemlist({ "npm", "root", "-g" })[1]
-    if vim.v.shell_error == 0 and npm_root and npm_root ~= "" then
-      add_candidate(npm_root .. "/mathjax-full")
-    end
+  return nil
+end
+
+-- The daemon script owns the canonical mathjax-full candidate list; we ask
+-- it to enumerate via `--list-paths` so the Lua side never drifts. Returns
+-- a string[] of candidate paths, or nil if we can't run the script.
+local function list_mathjax_candidates(script_path)
+  if not script_path or vim.fn.executable("node") == 0 then return nil end
+  local out = vim.fn.systemlist({ "node", script_path, "--list-paths" })
+  if vim.v.shell_error ~= 0 or type(out) ~= "table" then return nil end
+  local clean = {}
+  for _, p in ipairs(out) do
+    if type(p) == "string" and p ~= "" then table.insert(clean, p) end
+  end
+  return clean
+end
+
+local function check_mathjax_full(script_path)
+  local candidates = list_mathjax_candidates(script_path)
+  if not candidates then
+    report_warn("could not enumerate mathjax-full candidate paths",
+      { "Need both `node` and the bundled scripts/mathjax-daemon.mjs.",
+        "If you haven't yet, install with: npm install -g mathjax-full@3" })
+    return false
   end
   for _, p in ipairs(candidates) do
-    if p and vim.fn.filereadable(p .. "/package.json") == 1 then
+    if vim.fn.filereadable(p .. "/package.json") == 1 then
       report_ok("mathjax-full found at " .. p)
       return true
     end
@@ -111,19 +106,16 @@ local function check_mathjax_full()
     "Checked paths:",
   }
   for _, p in ipairs(candidates) do
-    if p and p ~= "" then table.insert(advice, "  " .. p) end
+    table.insert(advice, "  " .. p)
   end
   report_err("mathjax-full not found", advice)
   return false
 end
 
-local function check_daemon_script()
-  for _, rtp in ipairs(vim.api.nvim_list_runtime_paths()) do
-    local p = rtp .. "/scripts/mathjax-daemon.mjs"
-    if vim.fn.filereadable(p) == 1 then
-      report_ok("daemon script found at " .. p)
-      return true
-    end
+local function check_daemon_script(script_path)
+  if script_path then
+    report_ok("daemon script found at " .. script_path)
+    return true
   end
   report_err("scripts/mathjax-daemon.mjs not found on runtimepath", {
     "If you installed via a plugin manager, this should be automatic.",
@@ -185,8 +177,11 @@ function M.check()
   check_snacks()
   check_executable("node",
     { "Install Node.js 18+ — https://nodejs.org/" })
-  check_mathjax_full()
-  check_daemon_script()
+  -- check_mathjax_full needs the daemon script path (it shells out to it
+  -- with --list-paths), so resolve once and pass to both checks.
+  local script_path = find_daemon_script()
+  check_mathjax_full(script_path)
+  check_daemon_script(script_path)
 
   vim.health.start("latex-preview: rendering")
   check_rasterizer()
