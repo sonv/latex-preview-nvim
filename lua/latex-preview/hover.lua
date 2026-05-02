@@ -32,9 +32,6 @@ local targets = require("latex-preview.targets")
 ---                                 -- so we can detect when the cursor leaves it
 ---@field render_id integer
 ---@field signature string
----@field live_svg string?
----@field live_png string?
----@field live_files string[]?
 local current = nil ---@type LatexPreview.HoverState?
 local next_render_id = 0
 local active_render_id = 0
@@ -64,11 +61,6 @@ local function close_current()
     pcall(function() img:close() end)
   end
   pcall(function() current.win:close() end)
-  if current.live_svg then pcall(os.remove, current.live_svg) end
-  if current.live_png then pcall(os.remove, current.live_png) end
-  for _, path in ipairs(current.live_files or {}) do
-    pcall(os.remove, path)
-  end
   for buf, maps in pairs(source_keymaps) do
     if vim.api.nvim_buf_is_valid(buf) then
       for _, lhs in ipairs(CLOSE_KEYS) do
@@ -500,7 +492,6 @@ local function show_image_file(buf, source_win, png_path, opts)
     inline = false,
     max_width = max_width,
     max_height = max_height,
-    cache = config.get_cache_dir(buf),
     on_update_pre = function(placement)
       placement.img.info = nil
       if not updated then
@@ -520,8 +511,6 @@ local function show_image_file(buf, source_win, png_path, opts)
     eq = opts.eq,
     render_id = opts.render_id,
     signature = opts.signature,
-    live_svg = opts.live_svg,
-    live_png = opts.live_png,
     img = snacks.image.placement.new(win.buf, png_path, placement_opts),
   }
   register_autocmds(buf)
@@ -566,14 +555,10 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
       font_size = not eq.display and math.max(config.options.render.font_size or 11, 12) or nil,
       pad_to_cells = eq.display and nil or false,
     }, function(err, png_path)
-      -- See cleanup_unused in M.open: each live render writes its own
-      -- per-equation temp file; clean up if we won't end up using it.
-      local function cleanup_unused()
-        if png_path then
-          pcall(os.remove, png_path)
-          pcall(os.remove, (png_path:gsub("%.png$", ".svg")))
-        end
-      end
+      -- Live renders are reusable temp-cache entries owned by render.lua's
+      -- per-process temp directory. Unused images are left in place so a
+      -- later identical equation can reuse them until VimLeavePre cleanup.
+      local function cleanup_unused() end
       if err or not png_path then return end
       if active_render_id ~= render_id then return cleanup_unused() end
       if not current or current.render_id ~= render_id or current.win ~= win then return cleanup_unused() end
@@ -595,7 +580,6 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
         type = "math",
         max_width = max_width,
         max_height = max_height,
-        cache = config.get_cache_dir(source_buf),
         on_update_pre = function(placement)
           placement.img.info = nil
           local loc = placement:state().loc
@@ -605,9 +589,6 @@ local function render_math_in_text_window(source_buf, source_win, target, win, r
       local img = snacks.image.placement.new(win.buf, png_path, placement_opts)
       current.imgs = current.imgs or {}
       current.imgs[#current.imgs + 1] = img
-      current.live_files = current.live_files or {}
-      current.live_files[#current.live_files + 1] = png_path
-      current.live_files[#current.live_files + 1] = png_path:gsub("%.png$", ".svg")
       adjust_mixed_window(win, #(target.lines or {}))
     end)
   end
@@ -743,15 +724,10 @@ function M.open()
   end
 
   render.render(req, function(err, png_path)
-    -- Live renders write to a per-call temp file in /run/latex-preview/<pid>/.
-    -- If we early-exit any check below (cursor moved, signature drifted, etc.)
-    -- the PNG and its sibling SVG would otherwise leak until VimLeavePre.
-    local function cleanup_unused()
-      if png_path then
-        pcall(os.remove, png_path)
-        pcall(os.remove, (png_path:gsub("%.png$", ".svg")))
-      end
-    end
+    -- Live renders write reusable temp-cache files in
+    -- /run/latex-preview/<pid>/. If this request is superseded, leave the
+    -- files in place so later identical renders can reuse them.
+    local function cleanup_unused() end
     if active_render_id ~= render_id then return cleanup_unused() end
     if current and current.render_id ~= render_id then return cleanup_unused() end
     if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(source_win) then return cleanup_unused() end
@@ -799,9 +775,6 @@ function M.open()
       inline = false,
       max_width = max_width,
       max_height = max_height,
-      -- Use our cache_dir for the placement's working files. Not strictly
-      -- necessary (snacks would use its own), but keeps things tidy.
-      cache = config.get_cache_dir(buf),
       on_update_pre = function(placement)
         -- Snacks normally prefers ImageMagick's identify metadata, applying
         -- DPI and terminal scale math. For generated equation PNGs we already
@@ -826,8 +799,6 @@ function M.open()
       eq = live_eq,
       render_id = render_id,
       signature = signature,
-      live_svg = req.live and png_path:gsub("%.png$", ".svg") or nil,
-      live_png = req.live and png_path or nil,
       img = snacks.image.placement.new(win.buf, png_path, placement_opts),
     }
     register_autocmds(buf)

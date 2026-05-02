@@ -192,9 +192,18 @@ local function scan_snacks_image_cache()
   return groups, total_files, total_bytes
 end
 
+local function group_count(groups)
+  local count = 0
+  for _ in pairs(groups) do
+    count = count + 1
+  end
+  return count
+end
+
 local function trim_snacks_image_cache(max_files, max_bytes, grace_ms)
   local groups, total_files, total_bytes = scan_snacks_image_cache()
-  local over_files = max_files > 0 and total_files > max_files
+  local total_groups = group_count(groups)
+  local over_files = max_files > 0 and total_groups > max_files
   local over_bytes = max_bytes > 0 and total_bytes > max_bytes
   if not over_files and not over_bytes then return end
 
@@ -215,16 +224,17 @@ local function trim_snacks_image_cache(max_files, max_bytes, grace_ms)
     return a.nsec > b.nsec
   end)
   while #entries > 0
-      and ((max_files > 0 and total_files > max_files)
+      and ((max_files > 0 and total_groups > max_files)
         or (max_bytes > 0 and total_bytes > max_bytes)) do
     local group = table.remove(entries)
     for _, path in ipairs(group.files) do
       vim.fn.delete(path, "rf")
     end
+    total_groups = total_groups - 1
     total_files = total_files - group.count
     total_bytes = total_bytes - group.bytes
   end
-  if ((max_files > 0 and total_files > max_files)
+  if ((max_files > 0 and total_groups > max_files)
       or (max_bytes > 0 and total_bytes > max_bytes))
       and next_retry_ms then
     return math.max(1, next_retry_ms)

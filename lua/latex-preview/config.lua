@@ -11,7 +11,7 @@ local M = {}
 ---@field filetypes string[] Filetypes the keymap and command apply to.
 ---@field setup_keymap boolean Auto-install the toggle keymap on supported filetypes.
 ---@field keymap string|string[] The key(s) used for toggle. Default: "ih".
----@field cache boolean Write stable renders to cache_dir. Live hover updates always use temporary files.
+---@field cache boolean Write reusable renders to cache_dir when the buffer is unmodified. Live hover updates use reusable temporary files otherwise.
 ---@field cache_dir string|fun(buf: integer): string|"aux" Where to store rendered SVG/PNG files.
 ---@field daemon LatexPreview.DaemonConfig
 ---@field extract LatexPreview.ExtractConfig
@@ -59,9 +59,9 @@ local M = {}
 ---@class LatexPreview.SnacksConfig
 ---@field disable_document_images boolean Disable snacks.image's document inline/auto previewer.
 ---@field clean_info_on_exit boolean Empty snacks.image cache directory on VimLeavePre.
----@field max_cache_files integer Maximum snacks.image cache entries to keep, trimming oldest entries first.
----@field max_cache_bytes integer Maximum snacks.image cache bytes to keep, trimming oldest groups first.
----@field cache_grace_ms integer Do not trim cache entries modified within this many milliseconds.
+---@field max_cache_files integer Maximum Snacks image cache and reusable live-render temp entries to keep, trimming oldest groups first.
+---@field max_cache_bytes integer Maximum Snacks image and reusable live-render temp bytes to keep, trimming oldest groups first.
+---@field cache_grace_ms integer Do not trim cache/temp entries modified within this many milliseconds.
 
 ---@type LatexPreview.Config
 M.defaults = {

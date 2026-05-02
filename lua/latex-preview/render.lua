@@ -1,9 +1,9 @@
 -- lua/latex-preview/render.lua
 --
 -- Render an equation to a PNG file on disk. Pipeline:
---   (preamble, equation, display, color) hashed → cache hit?
---     yes → return cached PNG path
---     no  → daemon.render → SVG → magick/rsvg-convert → PNG → cache
+--   (preamble, equation, display, color) hashed → reusable PNG hit?
+--     yes → return existing PNG path
+--     no  → daemon.render → SVG → magick/rsvg-convert → PNG → cache/temp
 --
 -- The cache key is a content hash of all inputs that affect the output.
 -- That means editing a \newcommand in your buffer correctly invalidates,
@@ -16,6 +16,9 @@ local config = require("latex-preview.config")
 local daemon = require("latex-preview.daemon")
 local pad_warning_shown = false
 local temp_cleanup_registered = false
+local temp_cache_timer = nil
+local pending = {}
+local schedule_temp_cache_limit_check
 
 local function temp_base_dir()
   return vim.fn.stdpath("run") .. "/latex-preview"
@@ -46,6 +49,136 @@ local function cleanup_stale_temp_dirs()
   end
 end
 
+local function temp_render_stem(name)
+  return name:gsub("%.tmp$", ""):gsub("%.[^.]+$", "")
+end
+
+local function temp_cache_group(name, names)
+  local image_name = name:match("^(.*)%.info$")
+  if image_name then
+    if names and names[image_name] then
+      return temp_render_stem(image_name)
+    end
+    local unprefixed = image_name:match("^%x%x%x%x%x%x%x%x%-(.+)$")
+    if unprefixed and names and names[unprefixed] then
+      return temp_render_stem(unprefixed)
+    end
+    return temp_render_stem(image_name)
+  end
+  return temp_render_stem(name)
+end
+
+local function scan_temp_cache()
+  local dir = temp_dir()
+  local handle = uv.fs_scandir(dir)
+  if not handle then return {}, 0, 0 end
+  local entries = {}
+  local names = {}
+  while true do
+    local name = uv.fs_scandir_next(handle)
+    if not name then break end
+    local path = dir .. "/" .. name
+    local stat = uv.fs_stat(path)
+    if stat then
+      entries[#entries + 1] = { name = name, path = path, stat = stat }
+      names[name] = true
+    end
+  end
+
+  local groups = {}
+  local total_files, total_bytes = 0, 0
+  for _, entry in ipairs(entries) do
+    local stat = entry.stat
+    local key = temp_cache_group(entry.name, names)
+    groups[key] = groups[key] or { files = {}, count = 0, bytes = 0, mtime = 0, nsec = 0 }
+    local group = groups[key]
+    local size = stat.size or 0
+    local mtime = stat.mtime and stat.mtime.sec or 0
+    local nsec = stat.mtime and stat.mtime.nsec or 0
+    group.files[#group.files + 1] = entry.path
+    group.count = group.count + 1
+    group.bytes = group.bytes + size
+    if mtime > group.mtime or (mtime == group.mtime and nsec > group.nsec) then
+      group.mtime = mtime
+      group.nsec = nsec
+    end
+    total_files = total_files + 1
+    total_bytes = total_bytes + size
+  end
+  return groups, total_files, total_bytes
+end
+
+local function group_count(groups)
+  local count = 0
+  for _ in pairs(groups) do
+    count = count + 1
+  end
+  return count
+end
+
+local function trim_temp_cache(max_files, max_bytes, grace_ms)
+  local groups, total_files, total_bytes = scan_temp_cache()
+  local total_groups = group_count(groups)
+  local over_files = max_files > 0 and total_groups > max_files
+  local over_bytes = max_bytes > 0 and total_bytes > max_bytes
+  if not over_files and not over_bytes then return end
+
+  local now_sec = os.time()
+  local entries = {}
+  local next_retry_ms = nil
+  for _, group in pairs(groups) do
+    local age_ms = (now_sec - group.mtime) * 1000
+    if age_ms >= grace_ms then
+      entries[#entries + 1] = group
+    else
+      local remaining = grace_ms - age_ms
+      next_retry_ms = next_retry_ms and math.min(next_retry_ms, remaining) or remaining
+    end
+  end
+  table.sort(entries, function(a, b)
+    if a.mtime ~= b.mtime then return a.mtime > b.mtime end
+    return a.nsec > b.nsec
+  end)
+  while #entries > 0
+      and ((max_files > 0 and total_groups > max_files)
+        or (max_bytes > 0 and total_bytes > max_bytes)) do
+    local group = table.remove(entries)
+    for _, path in ipairs(group.files) do
+      pcall(os.remove, path)
+    end
+    total_groups = total_groups - 1
+    total_files = total_files - group.count
+    total_bytes = total_bytes - group.bytes
+  end
+  if ((max_files > 0 and total_groups > max_files)
+      or (max_bytes > 0 and total_bytes > max_bytes))
+      and next_retry_ms then
+    return math.max(1, next_retry_ms)
+  end
+end
+
+local function enforce_temp_cache_limit()
+  local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
+  local max_bytes = tonumber(config.options.snacks and config.options.snacks.max_cache_bytes) or 0
+  local grace_ms = tonumber(config.options.snacks and config.options.snacks.cache_grace_ms) or 0
+  if max_files <= 0 and max_bytes <= 0 then return end
+  local retry_ms = trim_temp_cache(max_files, max_bytes, math.max(0, grace_ms))
+  if retry_ms and schedule_temp_cache_limit_check then
+    schedule_temp_cache_limit_check(retry_ms)
+  end
+end
+
+schedule_temp_cache_limit_check = function(delay_ms)
+  local max_files = tonumber(config.options.snacks and config.options.snacks.max_cache_files) or 0
+  local max_bytes = tonumber(config.options.snacks and config.options.snacks.max_cache_bytes) or 0
+  if max_files <= 0 and max_bytes <= 0 then return end
+  if not temp_cache_timer then temp_cache_timer = assert(uv.new_timer()) end
+  temp_cache_timer:stop()
+  temp_cache_timer:start(math.max(1, math.ceil(delay_ms or 250)), 0, function()
+    vim.schedule(enforce_temp_cache_limit)
+  end)
+end
+
 local function ensure_temp_cleanup()
   if temp_cleanup_registered then return end
   temp_cleanup_registered = true
@@ -53,6 +186,11 @@ local function ensure_temp_cleanup()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("latex_preview_temp_cleanup", { clear = true }),
     callback = function()
+      if temp_cache_timer then
+        temp_cache_timer:stop()
+        temp_cache_timer:close()
+        temp_cache_timer = nil
+      end
       vim.fn.delete(temp_dir(), "rf")
     end,
   })
@@ -107,7 +245,7 @@ local function ensure_cache_dir(buf)
 end
 
 ---@param buf integer
----@param id integer?
+---@param id integer|string?
 ---@return string
 local function temp_stem(buf, id)
   ensure_temp_cleanup()
@@ -271,8 +409,10 @@ function M.render(req, cb)
   local buf = req.buf
   if not buf or buf == 0 then buf = vim.api.nvim_get_current_buf() end
   local buf_modified = vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified
-  local use_cache = config.options.cache and not req.live and not buf_modified
   local key = cache_key(req)
+  local use_cache = config.options.cache and not buf_modified
+  local use_reusable_temp = not use_cache and req.live
+  local can_reuse = use_cache or use_reusable_temp
   local svg_path
   local png_path
   if use_cache then
@@ -280,15 +420,35 @@ function M.render(req, cb)
     svg_path = dir .. "/" .. key .. ".svg"
     png_path = dir .. "/" .. key .. ".png"
   else
-    local stem = temp_stem(buf, req.live_id)
+    local stem = temp_stem(buf, use_reusable_temp and ("live-" .. key) or req.live_id)
     svg_path = stem .. ".svg"
     png_path = stem .. ".png"
   end
 
+  if can_reuse and pending[png_path] then
+    pending[png_path][#pending[png_path] + 1] = cb
+    return
+  end
+
   -- Cache hit? Check the PNG specifically — if the SVG is there but the
   -- PNG isn't, the rasterizer crashed mid-step and we want to retry.
-  if use_cache and uv.fs_stat(png_path) then
+  if can_reuse and uv.fs_stat(png_path) then
+    if use_reusable_temp then schedule_temp_cache_limit_check() end
     return vim.schedule(function() cb(nil, png_path) end)
+  end
+
+  if can_reuse then
+    pending[png_path] = { cb }
+  end
+
+  local function finish(err, path)
+    if use_reusable_temp and not err then schedule_temp_cache_limit_check() end
+    if not can_reuse then return cb(err, path) end
+    local callbacks = pending[png_path] or { cb }
+    pending[png_path] = nil
+    for _, waiter in ipairs(callbacks) do
+      waiter(err, path)
+    end
   end
 
   -- For temp (non-cached) renders, leave no debris on the filesystem when
@@ -311,20 +471,20 @@ function M.render(req, cb)
     font_size = effective_font_size(req),
     display_math_style = config.options.render.display_math_style,
   }, function(err, svg)
-    if err then cleanup_temps(); return cb(err, nil) end
-    if not svg then cleanup_temps(); return cb("daemon returned no svg", nil) end
+    if err then cleanup_temps(); return finish(err, nil) end
+    if not svg then cleanup_temps(); return finish("daemon returned no svg", nil) end
     -- Write SVG.
     local fd = io.open(svg_path, "w")
-    if not fd then cleanup_temps(); return cb("cannot open " .. svg_path .. " for write", nil) end
+    if not fd then cleanup_temps(); return finish("cannot open " .. svg_path .. " for write", nil) end
     fd:write(svg)
     fd:close()
     -- Rasterize.
     svg_to_png(svg_path, png_path, function(rerr)
-      if rerr then cleanup_temps(); return cb(rerr, nil) end
-      if not should_pad_to_cells(req) then return cb(nil, png_path) end
+      if rerr then cleanup_temps(); return finish(rerr, nil) end
+      if not should_pad_to_cells(req) then return finish(nil, png_path) end
       pad_to_cells(png_path, function(perr)
-        if perr then cleanup_temps(); return cb(perr, nil) end
-        cb(nil, png_path)
+        if perr then cleanup_temps(); return finish(perr, nil) end
+        finish(nil, png_path)
       end)
     end)
   end)
@@ -347,6 +507,7 @@ function M.clear_cache(buf)
     if not name then break end
     if name:match("%.svg$")
         or name:match("%.png$")
+        or name:match("%.info$")
         or name:match("%.tex$")
         or name:match("%.pdf$")
         or name:match("%.log$")

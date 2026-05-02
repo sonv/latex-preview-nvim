@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 Rolling changes are listed newest first by date.
 
+### Changed
+
+- Reused live hover render files for unchanged equations instead of rerendering every time, reducing repeated SVG/PNG writes while navigating back to the same math.
+- Bounded reusable live-render temp files with the existing `snacks.max_cache_files`, `snacks.max_cache_bytes`, and `snacks.cache_grace_ms` settings, trimming whole render groups (`.svg`, `.png`, and matching `.info`) oldest-first.
+- Stopped routing Snacks image metadata into latex-preview's render cache; Snacks `.info` files now stay in Snacks' own cache, and stale `.info` files are removed by `:LatexPreview clear`.
+
 ## 2026-05-01
 
 ### Added
