@@ -8,6 +8,7 @@ Rolling changes are listed newest first by date.
 
 ### Changed
 
+- Preamble extraction is now root-aware for multi-file projects: chapter buffers can use a root declared with `% !TEX root = ...`, vimtex's root metadata, or an unambiguous parent `.tex` file that reaches the chapter through `\input`, `\include`, or `\subfile`.
 - Reused live hover render files for unchanged equations instead of rerendering every time, reducing repeated SVG/PNG writes while navigating back to the same math.
 - Bounded reusable live-render temp files with the existing `snacks.max_cache_files`, `snacks.max_cache_bytes`, and `snacks.cache_grace_ms` settings, trimming whole render groups (`.svg`, `.png`, and matching `.info`) oldest-first.
 - Stopped routing Snacks image metadata into latex-preview's render cache; Snacks `.info` files now stay in Snacks' own cache, and stale `.info` files are removed by `:LatexPreview clear`.

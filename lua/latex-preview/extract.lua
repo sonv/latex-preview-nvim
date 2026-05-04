@@ -23,6 +23,29 @@ local uv = vim.uv or vim.loop
 local config = require("latex-preview.config")
 local util = require("latex-preview.util")
 
+local function normalize_path(path)
+  if not path or path == "" then return nil end
+  path = vim.fn.fnamemodify(path, ":p")
+  return vim.fs.normalize and vim.fs.normalize(path) or path
+end
+
+local function join_path(dir, path)
+  if path:match("^/") then return normalize_path(path) end
+  return normalize_path(dir .. "/" .. path)
+end
+
+local function buffer_for_path(path)
+  path = normalize_path(path)
+  if not path then return nil end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local name = normalize_path(vim.api.nvim_buf_get_name(buf))
+      if name == path then return buf end
+    end
+  end
+  return nil
+end
+
 -- Patterns that mark a line as carrying a macro/environment definition.
 local DEF_PATTERNS = {
   "\\newcommand%s*[%*]?%s*[{\\]",
@@ -181,7 +204,7 @@ end
 ---@return string[]
 local function input_names_from_line(line)
   local names = {}
-  for _, cmd in ipairs({ "input", "include" }) do
+  for _, cmd in ipairs({ "input", "include", "subfile" }) do
     for _, arg in ipairs(braced_args_after_command(line, cmd)) do
       if arg ~= "" then names[#names + 1] = arg end
     end
@@ -197,6 +220,14 @@ local function read_lines(path)
   for line in fd:lines() do lines[#lines + 1] = line end
   fd:close()
   return lines
+end
+
+local function lines_for_path(path)
+  local buf = buffer_for_path(path)
+  if buf and vim.api.nvim_buf_is_loaded(buf) then
+    return vim.api.nvim_buf_get_lines(buf, 0, -1, false), buf
+  end
+  return read_lines(path), nil
 end
 
 ---@param name string
@@ -224,25 +255,122 @@ local function find_local_tex_file(start_dir, name, depth_cap)
   return nil
 end
 
----Find local .sty files reachable from this buffer's directory and extract
----their definitions. The "reachability" rule: for each \usepackage{name},
----\RequirePackage{name}, or \input{name} in the buffer's preamble, look for
----matching local .sty/.tex files in the buffer's directory and parents.
----@param buf integer
----@return string
-function M.scan_sty_files(buf)
-  local self_path = vim.api.nvim_buf_get_name(buf)
-  if self_path == "" then return "" end
-  local start_dir = vim.fs.dirname(vim.fn.fnamemodify(self_path, ":p"))
+local function tex_root_from_magic(lines, base_dir)
+  for _, raw in ipairs(lines) do
+    local root = raw:match("^%s*%%%s*!%s*[Tt][Ee][Xx]%s+[Rr][Oo][Oo][Tt]%s*=%s*(.-)%s*$")
+    if root and root ~= "" then
+      return join_path(base_dir, root)
+    end
+  end
+end
 
+local function tex_root_from_vimtex(buf)
+  local ok, vimtex = pcall(function() return vim.b[buf].vimtex end)
+  if not ok or type(vimtex) ~= "table" then return nil end
+  if type(vimtex.tex) == "string" and vimtex.tex ~= "" then
+    return normalize_path(vimtex.tex)
+  end
+  if type(vimtex.root) == "string" and vimtex.root ~= "" and vimtex.root:match("%.tex$") then
+    return normalize_path(vimtex.root)
+  end
+end
+
+local function tex_arg_candidates(base_dirs, name)
+  local out = {}
+  local seen = {}
+  for _, dir in ipairs(base_dirs) do
+    for _, fname in ipairs(candidate_file_names(name)) do
+      local path = join_path(dir, fname)
+      if not seen[path] then
+        seen[path] = true
+        out[#out + 1] = path
+      end
+    end
+  end
+  return out
+end
+
+local function file_reaches_child(path, child_path, root_dir, seen)
+  path = normalize_path(path)
+  if not path or seen[path] then return false end
+  seen[path] = true
+  local lines = read_lines(path)
+  if not lines then return false end
+  child_path = normalize_path(child_path)
+  local file_dir = vim.fs.dirname(path)
+  local base_dirs = root_dir == file_dir and { root_dir } or { root_dir, file_dir }
+  for _, raw in ipairs(lines) do
+    local line = strip_comment(raw)
+    for _, name in ipairs(input_names_from_line(line)) do
+      for _, cand in ipairs(tex_arg_candidates(base_dirs, name)) do
+        if cand == child_path then return true end
+        if cand:match("%.tex$") and uv.fs_stat(cand) and file_reaches_child(cand, child_path, root_dir, seen) then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+local function root_reaches_child(root_path, child_path)
+  local root_dir = vim.fs.dirname(root_path)
+  return file_reaches_child(root_path, child_path, root_dir, {})
+end
+
+local function tex_root_from_parent_search(path)
+  path = normalize_path(path)
+  if not path then return nil end
+  local dir = vim.fs.dirname(path)
+  local matches = {}
+  local depth = 0
+  while dir and dir ~= "" and dir ~= "/" and depth < 6 do
+    local handle = uv.fs_scandir(dir)
+    if handle then
+      while true do
+        local name, typ = uv.fs_scandir_next(handle)
+        if not name then break end
+        if typ == "file" and name:match("%.tex$") then
+          local cand = normalize_path(dir .. "/" .. name)
+          if cand ~= path then
+            local lines = read_lines(cand)
+            if lines and table.concat(lines, "\n"):find("\\begin{document}", 1, true)
+                and root_reaches_child(cand, path) then
+              matches[#matches + 1] = cand
+            end
+          end
+        end
+      end
+    end
+    if #matches == 1 then return matches[1] end
+    if #matches > 1 then return nil end
+    local parent = vim.fs.dirname(dir)
+    if parent == dir then break end
+    dir, depth = parent, depth + 1
+  end
+end
+
+local function resolve_tex_root(buf, lines)
+  local self_path = normalize_path(vim.api.nvim_buf_get_name(buf))
+  if not self_path then return nil end
+  local self_dir = vim.fs.dirname(self_path)
+  return tex_root_from_magic(lines, self_dir)
+    or tex_root_from_vimtex(buf)
+    or tex_root_from_parent_search(self_path)
+    or self_path
+end
+
+local function scan_referenced_files(start_path, source_lines)
+  if not start_path then return "", {} end
+  local start_dir = vim.fs.dirname(start_path)
   local queue = {}
-  for _, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  for _, line in ipairs(source_lines) do
     line = strip_comment(line)
     if line:find("\\begin{document}", 1, true) then break end
     vim.list_extend(queue, package_names_from_line(line))
     vim.list_extend(queue, input_names_from_line(line))
   end
-  if #queue == 0 then return "" end
+  if #queue == 0 then return "", {} end
 
   local seen_name, seen_file, found, file_lines = {}, {}, {}, {}
   local depth_cap = config.options.extract.sty_search_depth
@@ -268,7 +396,7 @@ function M.scan_sty_files(buf)
       end
     end
   end
-  if #found == 0 then return "" end
+  if #found == 0 then return "", {} end
 
   local parts = {}
   for _, sty in ipairs(found) do
@@ -281,7 +409,20 @@ function M.scan_sty_files(buf)
       end
     end
   end
-  return table.concat(parts, "\n")
+  return table.concat(parts, "\n"), found
+end
+
+---Find local .sty files reachable from this buffer's directory and extract
+---their definitions. The "reachability" rule: for each \usepackage{name},
+---\RequirePackage{name}, or \input{name} in the buffer's preamble, look for
+---matching local .sty/.tex files in the buffer's directory and parents.
+---@param buf integer
+---@return string
+function M.scan_sty_files(buf)
+  local self_path = normalize_path(vim.api.nvim_buf_get_name(buf))
+  if not self_path then return "" end
+  local defs = scan_referenced_files(self_path, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  return defs
 end
 
 ---@param preamble string
@@ -333,11 +474,45 @@ local function normalize_for_mathjax(preamble)
   return preamble
 end
 
----Cached per-buffer extraction. The cache key includes the buffer's
----changedtick so the preamble invalidates as soon as the user edits a
----\newcommand. .sty files aren't tracked for changes — the cache lives
----only as long as the buffer hasn't changed, so re-scanning is cheap
----when it does happen.
+local function file_signature(path)
+  local buf = buffer_for_path(path)
+  if buf and vim.api.nvim_buf_is_loaded(buf) then
+    return "buf:" .. tostring(buf) .. ":" .. tostring(vim.api.nvim_buf_get_changedtick(buf))
+  end
+  local stat = path and uv.fs_stat(path) or nil
+  if not stat then return "missing:" .. tostring(path or "") end
+  local mtime = stat.mtime or {}
+  return table.concat({
+    "file",
+    path,
+    tostring(stat.size or 0),
+    tostring(mtime.sec or 0),
+    tostring(mtime.nsec or 0),
+  }, ":")
+end
+
+local function dependency_signature(paths)
+  local parts = {}
+  for _, path in ipairs(paths or {}) do
+    parts[#parts + 1] = file_signature(path)
+  end
+  return table.concat(parts, "\n")
+end
+
+local function normalize_combined_preamble(combined)
+  if config.options.extract.rewrite_providecommand then
+    combined = combined:gsub("\\providecommand", "\\newcommand")
+  end
+  if config.options.extract.rewrite_edef then
+    combined = combined:gsub("\\edef", "\\def")
+  end
+  return normalize_for_mathjax(combined)
+end
+
+---Cached per-buffer extraction. The cache key includes the current buffer's
+---changedtick, the resolved root source, and the scanned local dependency
+---mtimes so root-aware multi-file projects invalidate when their macro
+---sources change.
 local cache = {}
 local cache_cleanup_registered = false
 
@@ -356,33 +531,50 @@ end
 ---@return string preamble  Concatenated definitions, MathJax-normalized.
 function M.get_preamble(buf)
   ensure_cache_cleanup()
+  local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local current_path = normalize_path(vim.api.nvim_buf_get_name(buf))
+  local root_path = resolve_tex_root(buf, current_lines)
+  local root_lines = current_lines
+  if root_path and root_path ~= current_path then
+    root_lines = lines_for_path(root_path) or current_lines
+  end
+
   local tick = vim.api.nvim_buf_get_changedtick(buf)
+  local root_sig = root_path and file_signature(root_path) or ""
   local entry = cache[buf]
-  if entry and entry.tick == tick then return entry.value end
+  if entry
+      and entry.tick == tick
+      and entry.root_path == root_path
+      and entry.root_sig == root_sig
+      and entry.dep_sig == dependency_signature(entry.deps) then
+    return entry.value
+  end
 
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local buf_defs = M.extract_definitions(lines)
+  local root_defs = M.extract_definitions(root_lines)
+  local buf_defs = ""
+  if not root_path or root_path ~= current_path then
+    buf_defs = M.extract_definitions(current_lines)
+  end
   local sty_defs = ""
+  local deps = {}
   if config.options.extract.scan_sty then
-    sty_defs = M.scan_sty_files(buf)
+    sty_defs, deps = scan_referenced_files(root_path or current_path, root_lines)
   end
 
-  local combined
-  if buf_defs == "" and sty_defs == "" then combined = ""
-  elseif sty_defs == "" then combined = buf_defs
-  elseif buf_defs == "" then combined = sty_defs
-  else combined = sty_defs .. "\n" .. buf_defs end
+  local parts = {}
+  if sty_defs ~= "" then parts[#parts + 1] = sty_defs end
+  if root_defs ~= "" then parts[#parts + 1] = root_defs end
+  if buf_defs ~= "" then parts[#parts + 1] = buf_defs end
+  local combined = normalize_combined_preamble(table.concat(parts, "\n"))
 
-  -- MathJax compatibility rewrites.
-  if config.options.extract.rewrite_providecommand then
-    combined = combined:gsub("\\providecommand", "\\newcommand")
-  end
-  if config.options.extract.rewrite_edef then
-    combined = combined:gsub("\\edef", "\\def")
-  end
-  combined = normalize_for_mathjax(combined)
-
-  cache[buf] = { tick = tick, value = combined }
+  cache[buf] = {
+    tick = tick,
+    root_path = root_path,
+    root_sig = root_sig,
+    deps = deps,
+    dep_sig = dependency_signature(deps),
+    value = combined,
+  }
   return combined
 end
 

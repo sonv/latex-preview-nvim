@@ -328,23 +328,59 @@ require("latex-preview").setup({
 
 Same approach Overleaf's editor uses:
 
-1. **Scan the buffer** for definition-shaped commands: `\newcommand`,
-   `\renewcommand`, `\providecommand`, `\DeclareMathOperator`,
-   `\NewDocumentCommand`, `\def`, `\let`, etc. Anything before
-   `\begin{document}` is included.
+1. **Find the TeX root** for the current buffer. The plugin checks, in
+   order: a `% !TEX root = ...` magic comment, vimtex root metadata when
+   available, and an unambiguous parent `.tex` file that contains
+   `\begin{document}` and reaches the current file through
+   `\input`/`\include`/`\subfile`. If no root is found, the current
+   buffer is used.
 
-2. **Scan local `.sty` files** referenced via `\usepackage{name}` when
-   `name.sty` exists in the buffer's directory or any ancestor.
+2. **Scan the root preamble** for definition-shaped commands:
+   `\newcommand`, `\renewcommand`, `\providecommand`,
+   `\DeclareMathOperator`, `\NewDocumentCommand`, `\def`, `\let`, etc.
+   Anything before `\begin{document}` is included. If the current buffer
+   is a chapter/include file, definitions from that buffer are included
+   too.
 
-3. **Normalize for MathJax**: `\providecommand` → `\newcommand` (because
+3. **Scan local `.sty`/`.tex` macro files** referenced from the root
+   preamble via `\usepackage{name}`, `\RequirePackage{name}`,
+   `\input{name}`, or `\include{name}` when matching local files exist in
+   the root directory or configured parent search depth.
+
+4. **Normalize for MathJax**: `\providecommand` → `\newcommand` (because
    MathJax's `\providecommand` no-ops on built-in name collisions),
    `\edef` → `\def` (MathJax doesn't do expand-at-definition).
 
-4. **Send to the daemon** as a preamble. MathJax registers the macros
+5. **Send to the daemon** as a preamble. MathJax registers the macros
    into its macro table, then renders the equation.
 
 This means custom notation packages "just work" without any per-project
 setup.
+
+### Multi-file projects
+
+When editing an included chapter file, latex-preview uses the project's
+actual root preamble instead of only scanning the chapter. The root file
+does not need to be named `main.tex`; it can be `paper.tex`, `thesis.tex`,
+or any other `.tex` file.
+
+The most explicit setup is a magic comment in the chapter:
+
+```tex
+% !TEX root = ../paper.tex
+```
+
+If that is not present, vimtex's root metadata is used when available.
+As a fallback, latex-preview searches parent directories for a single
+`.tex` file that contains `\begin{document}` and reaches the current
+file through `\input{...}`, `\include{...}`, or `\subfile{...}`. Nested
+includes are followed, so a root can include a part file which then
+includes the chapter you are editing.
+
+Preamble extraction is cached by the current buffer, the resolved root
+file, and the local macro files that were scanned, so edits to the
+chapter, root preamble, or referenced local macro files invalidate the
+preview preamble.
 
 ## References and citations
 
