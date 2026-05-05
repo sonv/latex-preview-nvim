@@ -21,6 +21,8 @@
 --   cites    - toggle citation previews
 --   cites-on - enable citation previews
 --   cites-off - disable citation previews
+--   density [N|reset]         - set/show buffer-local render density
+--   display-density [N|reset] - set/show buffer-local display render density
 --   clear    - delete cached SVG/PNG files
 --   stop     - stop the MathJax daemon
 --   status   - print daemon state
@@ -53,6 +55,31 @@ local function status()
     tostring(lp.citations_enabled()),
     tostring(hover.is_supported())
   ))
+end
+
+local function set_density_command(kind, value)
+  local key = kind == "display" and "latex_preview_display_density" or "latex_preview_density"
+  if not value or value == "" then
+    vim.notify("latex-preview: buffer " .. (kind == "display" and "display " or "")
+      .. "density " .. tostring(vim.b[key] or "default"))
+    return
+  end
+  if value == "reset" or value == "default" or value == "clear" then
+    vim.b[key] = nil
+    vim.notify("latex-preview: buffer " .. (kind == "display" and "display " or "") .. "density reset")
+    return
+  end
+  local density = tonumber(value)
+  if not density or density <= 0 then
+    vim.notify("[latex-preview] density must be a positive number", vim.log.levels.ERROR)
+    return
+  end
+  local result = math.floor(density + 0.5)
+  vim.b[key] = result
+  local hover = require("latex-preview.hover")
+  if hover.is_open() then hover.open() end
+  vim.notify("latex-preview: buffer " .. (kind == "display" and "display " or "")
+    .. "density set to " .. tostring(result))
 end
 
 local subcommands = {
@@ -113,6 +140,12 @@ local subcommands = {
   ["cites-off"] = function()
     require("latex-preview").set_citations(false)
     vim.notify("latex-preview: citations disabled")
+  end,
+  density = function(args)
+    set_density_command("all", args[2])
+  end,
+  ["display-density"] = function(args)
+    set_density_command("display", args[2])
   end,
   clear = function()
     local n = require("latex-preview").clear_cache()
@@ -199,11 +232,19 @@ vim.api.nvim_create_user_command("LatexPreview", function(opts)
     vim.notify("[latex-preview] unknown subcommand: " .. sub, vim.log.levels.ERROR)
     return
   end
-  fn()
+  fn(opts.fargs)
 end, {
-  nargs = "?",
-  complete = function(_, line)
+  nargs = "*",
+  complete = function(arglead, line)
     local args = vim.split(line, "%s+", { trimempty = true })
+    if (args[2] == "density" or args[2] == "display-density")
+        and (#args >= 3 or line:match("%s$")) then
+      local matches = {}
+      for _, item in ipairs({ "reset", "default", "clear", "300", "600" }) do
+        if item:sub(1, #arglead) == arglead then matches[#matches + 1] = item end
+      end
+      return matches
+    end
     if #args <= 2 then
       local prefix = args[2] or ""
       local matches = {}

@@ -195,18 +195,19 @@ local render = require("latex-preview.render")
 local buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(buf)
 
-local function render_async(equation, cb)
+local function render_async(equation, cb, opts)
+  opts = opts or {}
   render.render({
     preamble = "",
     equation = equation,
-    display = false,
+    display = opts.display == true,
     buf = buf,
     live = true,
     live_id = equation,
   }, cb)
 end
 
-local function render_once(equation)
+local function render_once(equation, opts)
   local done = false
   local err
   local path
@@ -214,7 +215,7 @@ local function render_once(equation)
     err = render_err
     path = png_path
     done = true
-  end)
+  end, opts)
   assert_true(vim.wait(2000, function() return done end, 10), "render timed out")
   assert_eq(nil, err, "render failed")
   assert_true(path and uv.fs_stat(path), "render did not create a png")
@@ -238,6 +239,14 @@ assert_eq(callbacks[1].path, callbacks[2].path, "coalesced renders should return
 local reused_path = render_once("x + y")
 assert_eq(callbacks[1].path, reused_path, "same live render should reuse the existing temp png")
 assert_eq(1, daemon_calls, "same live render should not call the daemon again")
+
+vim.b[buf].latex_preview_display_density = 300
+local display_path = render_once("x + y", { display = true })
+vim.b[buf].latex_preview_display_density = 600
+local hidpi_display_path = render_once("x + y", { display = true })
+assert_true(display_path ~= hidpi_display_path, "buffer-local display density should change the render key")
+assert_eq(3, daemon_calls, "changing buffer-local display density should rerender display math")
+vim.b[buf].latex_preview_display_density = nil
 
 render_once("a + b")
 render_once("c + d")

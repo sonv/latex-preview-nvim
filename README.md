@@ -151,6 +151,8 @@ git clone https://github.com/your-username/latex-preview.nvim \
 | `:LatexPreview cites` | Toggle citation previews under `\cite...` commands |
 | `:LatexPreview cites-on` | Enable citation previews |
 | `:LatexPreview cites-off` | Disable citation previews |
+| `:LatexPreview density [N\|reset]` | Set/show the current buffer's render density override |
+| `:LatexPreview display-density [N\|reset]` | Set/show the current buffer's display-equation density override |
 | `:LatexPreview clear` | Delete cached SVG/PNG files |
 | `:LatexPreview stop` | Stop the daemon (auto-respawns next render) |
 | `:LatexPreview status` | Print daemon and popup state |
@@ -479,7 +481,21 @@ specific error. MathJax doesn't support every TeX command; switch to
 your normal compile for those.
 
 **Popup is too big or too small.** Adjust `render.density` (higher =
-larger). HiDPI users typically want 600.
+larger). HiDPI users typically want 600. To change it live for the
+current buffer without editing your config:
+
+```vim
+:LatexPreview density 300
+:LatexPreview display-density 600
+:LatexPreview display-density reset
+```
+
+The same buffer-local values can be set from Lua:
+
+```lua
+vim.b.latex_preview_density = 300
+vim.b.latex_preview_display_density = 600
+```
 
 **Daemon respawns repeatedly.** `mathjax-full` not in the search path.
 Set `LATEX_PREVIEW_MATHJAX_PATH` env var to its install directory, or

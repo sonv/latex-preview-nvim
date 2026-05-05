@@ -178,7 +178,17 @@ local function target_under_cursor(buf)
   return nil
 end
 
-local function render_signature(preamble, eq)
+local function render_density(buf, display)
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    local key = display and "latex_preview_display_density" or "latex_preview_density"
+    local value = vim.b[buf][key]
+    if value == nil and display then value = vim.b[buf].latex_preview_density end
+    if value ~= nil then return tonumber(value) or config.options.render.density end
+  end
+  return config.options.render.density
+end
+
+local function render_signature(preamble, eq, buf)
   local font_size = eq.display
     and (config.options.render.display_font_size or config.options.render.font_size)
     or config.options.render.font_size
@@ -190,7 +200,7 @@ local function render_signature(preamble, eq)
     tostring(font_size),
     tostring(config.options.render.display_math_style),
     tostring(config.options.render.pad_to_cells),
-    tostring(config.options.render.density),
+    tostring(render_density(buf, eq.display)),
   }, "\n--latex-preview--\n")
 end
 
@@ -599,6 +609,12 @@ local function show_mixed_text_target(buf, source_win, target)
   local signature = table.concat({
     target.signature or table.concat(target.lines or {}, "\n"),
     vim.fn.sha256(preamble),
+    tostring(render_density(buf, false)),
+    tostring(render_density(buf, true)),
+    tostring(config.options.render.font_size),
+    tostring(config.options.render.display_font_size),
+    tostring(config.options.render.display_math_style),
+    tostring(config.options.render.pad_to_cells),
   }, "\n--latex-preview--\n")
   if current and current.type == "mixed_text" and current.signature == signature then
     current.buf = buf
@@ -706,7 +722,7 @@ function M.open()
     buf = buf,  -- so render.lua resolves cache_dir per-buffer
     live = true,
   }
-  local signature = render_signature(preamble, eq)
+  local signature = render_signature(preamble, eq, buf)
   if current and current.img and current.signature == signature then
     current.eq = eq
     show_under_cursor(current.win, source_win)
@@ -735,7 +751,7 @@ function M.open()
     local live_target = target_under_cursor(buf)
     if not live_target or live_target.type ~= "equation" then return cleanup_unused() end
     local live_eq = live_target.equation
-    if render_signature(extract.get_preamble(buf), live_eq) ~= signature then return cleanup_unused() end
+    if render_signature(extract.get_preamble(buf), live_eq, buf) ~= signature then return cleanup_unused() end
     if err or not png_path then
       vim.notify("[latex-preview] " .. (err or "render failed"), vim.log.levels.WARN)
       return

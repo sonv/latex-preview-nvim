@@ -84,6 +84,11 @@ Example: >lua
         cites     Toggle citation previews on/off.
         cites-on  Enable citation previews.
         cites-off Disable citation previews.
+        density [N|reset]
+                  Set/show the current buffer's render density override.
+        display-density [N|reset]
+                  Set/show the current buffer's display-equation density
+                  override.
         clear     Remove cached SVG/PNG files from disk.
         stop      Stop the MathJax daemon (auto-respawns on next render).
         status    Print daemon and popup state.
@@ -244,6 +249,17 @@ render.fg ~
                                               *latex-preview-config-density*
 render.density ~
         SVG -> PNG DPI. 300 for standard displays, 600 for HiDPI.
+        To change density live for the current buffer:
+>
+        :LatexPreview density 300
+        :LatexPreview display-density 600
+        :LatexPreview display-density reset
+<
+        From Lua, set:
+>
+        vim.b.latex_preview_density = 300
+        vim.b.latex_preview_display_density = 600
+<
 
                                           *latex-preview-config-setup-keymap*
 setup_keymap ~

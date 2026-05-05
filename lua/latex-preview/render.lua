@@ -204,6 +204,17 @@ local function effective_font_size(req)
   return config.options.render.font_size or 11
 end
 
+local function effective_density(req)
+  local buf = req.buf
+  if buf and buf ~= 0 and vim.api.nvim_buf_is_valid(buf) then
+    local buffer_key = req.display and "latex_preview_display_density" or "latex_preview_density"
+    local value = vim.b[buf][buffer_key]
+    if value == nil and req.display then value = vim.b[buf].latex_preview_density end
+    if value ~= nil then return tonumber(value) or config.options.render.density or 300 end
+  end
+  return tonumber(config.options.render.density) or 300
+end
+
 local function should_pad_to_cells(req)
   if req.pad_to_cells ~= nil then return req.pad_to_cells == true end
   return config.options.render.pad_to_cells == true
@@ -215,7 +226,7 @@ local function cache_key(req)
   local renderer_version = "raster-v8"
   local fg = config.get_fg()
   local font_size = effective_font_size(req)
-  local density = config.options.render.density
+  local density = effective_density(req)
   -- Avoid \0 separators because vim.fn.sha256 treats embedded NULs as a
   -- Blob signal and refuses string input. Newlines are safe and the
   -- collision risk is negligible for our use.
@@ -295,10 +306,10 @@ end
 ---Convert SVG file to PNG file via the configured tool.
 ---@param svg_path string
 ---@param png_path string
+---@param density integer
 ---@param cb fun(err: string?)
-local function svg_to_png(svg_path, png_path, cb)
+local function svg_to_png(svg_path, png_path, density, cb)
   local tool = config.options.render.svg_to_png
-  local density = config.options.render.density
   if tool == "auto" then
     tool = vim.fn.executable("rsvg-convert") == 1 and "rsvg" or "magick"
   end
@@ -408,6 +419,7 @@ function M.render(req, cb)
   -- switches windows while a render is in flight.
   local buf = req.buf
   if not buf or buf == 0 then buf = vim.api.nvim_get_current_buf() end
+  req.buf = buf
   local buf_modified = vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified
   local key = cache_key(req)
   local use_cache = config.options.cache and not buf_modified
@@ -479,7 +491,7 @@ function M.render(req, cb)
     fd:write(svg)
     fd:close()
     -- Rasterize.
-    svg_to_png(svg_path, png_path, function(rerr)
+    svg_to_png(svg_path, png_path, effective_density(req), function(rerr)
       if rerr then cleanup_temps(); return finish(rerr, nil) end
       if not should_pad_to_cells(req) then return finish(nil, png_path) end
       pad_to_cells(png_path, function(perr)
